@@ -1293,6 +1293,29 @@
   .room-status-bar.expanded .room-status-chevron{ transform:rotate(180deg); }
   .room-status-body{ display:none; padding:0 9px 9px; }
   .room-status-bar.expanded .room-status-body{ display:block; }
+
+  /* ---------- pet streak (blinking cat art) ---------- */
+  .pet-streak-box{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:8px 0 7px;
+    margin-top:2px;
+    border-top:1px solid rgba(147,51,234,0.12);
+  }
+  .pet-cat{
+    width:64px;      /* <- adjust this to resize the pet, height follows automatically */
+    height:auto;
+    display:block;
+    image-rendering:auto;
+    -webkit-user-drag:none;
+    user-select:none;
+    touch-action:none;   /* so dragging on the cat doesn't scroll the page */
+    cursor:grab;
+    transform-origin:50% 100%;
+  }
+  .pet-cat:active{ cursor:grabbing; }
+
   .room-member-row{ display:flex; align-items:center; gap:6px; padding:5px 0; border-top:1px solid rgba(147,51,234,0.12); font-size:11px; color:var(--text-secondary); }
   .room-member-row:first-child{ border-top:none; }
   .room-member-avatar{ width:18px; height:18px; border-radius:50%; flex-shrink:0; object-fit:cover; background:var(--purple-muted); }
@@ -1743,6 +1766,9 @@ if ("serviceWorker" in navigator) {
     </div>
     <div class="room-status-body" id="roomStatusBody">
       <div id="roomMemberList"></div>
+      <div class="pet-streak-box" id="petStreakBox">
+        <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
+      </div>
       <button type="button" class="room-leave-btn" id="roomLeaveBtn">Leave Room</button>
     </div>
   </div>
@@ -4217,7 +4243,138 @@ if ("serviceWorker" in navigator) {
     const roomSettingsBtn = document.getElementById('roomSettingsBtn');
     const roomMemberList = document.getElementById('roomMemberList');
     const roomLeaveBtn = document.getElementById('roomLeaveBtn');
+    const petStreakCat = document.getElementById('petStreakCat');
     if(!roomModeBtn) return;
+
+    // ---- pet streak (blinking cat) animation ----
+    // Uses 3 image frames placed next to this HTML file (same folder).
+    // Rename your uploaded files to exactly these names, or edit the
+    // paths below to match wherever you put them in the repository:
+    //   cat-open.png        -> eyes open (normal / resting state)
+    //   cat-half-blink.png  -> eyes halfway closed (mid-blink)
+    //   cat-full-blink.png  -> eyes fully closed (peak of the blink)
+    const PET_FRAMES = {
+      open: 'cat-open.png',
+      half: 'cat-half-blink.png',
+      full: 'cat-full-blink.png'
+    };
+    // preload so the swap is instant with no flicker/flash of a blank image
+    Object.values(PET_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
+
+    let petAnimTimer = null;
+    function petPlayBlink(){
+      if(!petStreakCat) return;
+      petStreakCat.src = PET_FRAMES.half;
+      setTimeout(()=>{ petStreakCat.src = PET_FRAMES.full; }, 110);
+      setTimeout(()=>{ petStreakCat.src = PET_FRAMES.half; }, 240);
+      setTimeout(()=>{ petStreakCat.src = PET_FRAMES.open; }, 370);
+    }
+    function startPetAnim(){
+      if(!petStreakCat || petAnimTimer) return;
+      petStreakCat.src = PET_FRAMES.open;
+      petAnimTimer = setInterval(petPlayBlink, 8000);
+    }
+    function stopPetAnim(){
+      if(petAnimTimer){ clearInterval(petAnimTimer); petAnimTimer = null; }
+    }
+
+    // ---- interactive petting ----
+    // Quick tap  -> plays one blink cycle (petPlayBlink, reused from above).
+    // Press&hold -> eyes close immediately and stay closed while held;
+    //               dragging the finger/mouse up or down gently stretches
+    //               the cat taller/shorter (elastic, snaps back on release);
+    //               a soft synthesized purring rumble plays the whole time.
+    const HOLD_DELAY_MS   = 160;  // how long a press must last before it counts as "holding" instead of a tap
+    const STRETCH_RANGE_PX= 70;   // finger travel (px) needed for the full stretch amount
+    const STRETCH_MAX     = 0.12; // max +/-12% vertical stretch
+
+    let holdTimer = null;
+    let isHolding = false;
+    let holdStartY = 0;
+
+    let audioCtx = null, purrOsc = null, purrGain = null, purrLFO = null, purrLFOGain = null;
+    function purrStart(){
+      try{
+        if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if(audioCtx.state === 'suspended') audioCtx.resume();
+        if(purrGain) return; // already purring
+        purrOsc = audioCtx.createOscillator();
+        purrOsc.type = 'sine';
+        purrOsc.frequency.value = 28; // low rumble, like a cat's chest purr
+
+        purrGain = audioCtx.createGain();
+        purrGain.gain.value = 0.0001;
+
+        purrLFO = audioCtx.createOscillator();     // makes the rumble pulse instead of a flat tone
+        purrLFO.type = 'sine';
+        purrLFO.frequency.value = 24;               // ~24 pulses/sec, typical purr rate
+        purrLFOGain = audioCtx.createGain();
+        purrLFOGain.gain.value = 0.035;
+
+        purrLFO.connect(purrLFOGain);
+        purrLFOGain.connect(purrGain.gain);
+        purrOsc.connect(purrGain);
+        purrGain.connect(audioCtx.destination);
+
+        purrOsc.start();
+        purrLFO.start();
+        purrGain.gain.linearRampToValueAtTime(0.045, audioCtx.currentTime + 0.18);
+      }catch(e){ /* Web Audio unavailable — fail silently, no sound is not critical */ }
+    }
+    function purrStop(){
+      if(!purrGain || !audioCtx) return;
+      const now = audioCtx.currentTime;
+      try{
+        purrGain.gain.cancelScheduledValues(now);
+        purrGain.gain.setValueAtTime(purrGain.gain.value, now);
+        purrGain.gain.linearRampToValueAtTime(0.0001, now + 0.12);
+      }catch(e){}
+      const o = purrOsc, l = purrLFO;
+      setTimeout(()=>{ try{ o.stop(); }catch(e){} try{ l.stop(); }catch(e){} }, 160);
+      purrOsc = null; purrLFO = null; purrGain = null; purrLFOGain = null;
+    }
+
+    function petResetStretch(){
+      petStreakCat.style.transition = 'transform .25s ease';
+      petStreakCat.style.transform = 'scaleY(1)';
+      setTimeout(()=>{ petStreakCat.style.transition = ''; }, 260);
+    }
+    function petBeginHold(){
+      isHolding = true;
+      stopPetAnim();                        // pause the automatic 8s blink while petting
+      petStreakCat.src = PET_FRAMES.full;   // eyes close while held
+      purrStart();
+    }
+    function petEndHold(){
+      if(!isHolding) return;
+      isHolding = false;
+      petResetStretch();
+      petStreakCat.src = PET_FRAMES.open;
+      purrStop();
+      if(roomStatusBar.classList.contains('expanded')) startPetAnim();
+    }
+    function petHandleRelease(){
+      clearTimeout(holdTimer);
+      if(isHolding) petEndHold(); else petPlayBlink(); // wasn't held long enough -> treat as a plain tap
+    }
+
+    if(petStreakCat){
+      petStreakCat.addEventListener('pointerdown', e=>{
+        e.preventDefault();
+        holdStartY = e.clientY;
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(petBeginHold, HOLD_DELAY_MS);
+        try{ petStreakCat.setPointerCapture(e.pointerId); }catch(err){}
+      });
+      petStreakCat.addEventListener('pointermove', e=>{
+        if(!isHolding) return;
+        const dy = e.clientY - holdStartY; // negative = finger moved up
+        const scale = 1 + Math.max(-STRETCH_MAX, Math.min(STRETCH_MAX, -dy / STRETCH_RANGE_PX));
+        petStreakCat.style.transform = 'scaleY(' + scale + ')';
+      });
+      petStreakCat.addEventListener('pointerup', petHandleRelease);
+      petStreakCat.addEventListener('pointercancel', petHandleRelease);
+    }
 
     const configured = FIREBASE_DB_URL && FIREBASE_DB_URL.indexOf('PASTE_') !== 0;
     let roomId = null;
@@ -4435,6 +4592,7 @@ if ("serviceWorker" in navigator) {
     async function leaveRoom(){
       await removeMyStatus();
       stopHeartbeat();
+      stopPetAnim();
       roomId = null; memberId = null;
       try{ sessionStorage.removeItem(SESSION_KEY); }catch(e){}
       hideRoomBar();
@@ -4521,6 +4679,7 @@ if ("serviceWorker" in navigator) {
       closeMenu();
       if(roomId){
         roomStatusBar.classList.toggle('expanded');
+        if(roomStatusBar.classList.contains('expanded')) startPetAnim(); else stopPetAnim();
         return;
       }
       openModal('join');
@@ -4529,7 +4688,10 @@ if ("serviceWorker" in navigator) {
       e.stopPropagation();
       openModal('edit');
     });
-    roomStatusHead.addEventListener('click', ()=> roomStatusBar.classList.toggle('expanded'));
+    roomStatusHead.addEventListener('click', ()=>{
+      roomStatusBar.classList.toggle('expanded');
+      if(roomStatusBar.classList.contains('expanded')) startPetAnim(); else stopPetAnim();
+    });
     roomModalCancel.addEventListener('click', ()=> roomModalOverlay.classList.remove('open'));
     roomModalOverlay.addEventListener('click', e=>{ if(e.target===roomModalOverlay) roomModalOverlay.classList.remove('open'); });
     roomModalJoin.addEventListener('click', handleModalSubmit);
