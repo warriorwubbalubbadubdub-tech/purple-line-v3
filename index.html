@@ -1274,6 +1274,19 @@
   .room-avatar-preview img{ width:100%; height:100%; object-fit:cover; display:block; }
   .room-avatar-preview span{ font-size:22px; color:var(--purple-core); }
   .room-modal-err{ min-height:16px; font-size:11px; color:#ef4444; margin-top:8px; }
+  .room-modal-restart-btn{
+    width:100%;
+    margin-top:4px;
+    padding:9px;
+    border:1px solid rgba(239,68,68,0.4);
+    border-radius:10px;
+    background:rgba(239,68,68,0.1);
+    color:#ef4444;
+    font-size:12px;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .room-modal-restart-btn:hover{ background:rgba(239,68,68,0.18); }
   .room-modal-actions{ display:flex; gap:8px; margin-top:14px; }
   .room-modal-actions button{ flex:1; padding:9px; border-radius:10px; border:none; font-size:13px; font-weight:600; cursor:pointer; }
   .room-modal-cancel{ background:rgba(255,255,255,0.08); color:var(--text-secondary); }
@@ -1993,6 +2006,7 @@ if ("serviceWorker" in navigator) {
       <input id="roomCodeInput" type="text" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off">
     </div>
     <div class="room-modal-err" id="roomModalErr"></div>
+    <button type="button" class="room-modal-restart-btn" id="roomRestartBtn" style="display:none">Restart room (kicks everyone)</button>
     <div class="room-modal-actions">
       <button type="button" class="room-modal-cancel" id="roomModalCancel">Cancel</button>
       <button type="button" class="room-modal-join" id="roomModalJoin">Join</button>
@@ -4415,6 +4429,7 @@ if ("serviceWorker" in navigator) {
     const roomNameInput = document.getElementById('roomNameInput');
     const roomCodeInput = document.getElementById('roomCodeInput');
     const roomModalErr = document.getElementById('roomModalErr');
+    const roomRestartBtn = document.getElementById('roomRestartBtn');
     const roomModalCancel = document.getElementById('roomModalCancel');
     const roomModalJoin = document.getElementById('roomModalJoin');
     const roomStatusBar = document.getElementById('roomStatusBar');
@@ -4912,7 +4927,23 @@ if ("serviceWorker" in navigator) {
           const row = document.createElement('div');
           row.className = 'room-member-row';
           const name = document.createElement('span'); name.className='room-member-name'; name.textContent = m.name || 'Studying';
-          const mode = document.createElement('span'); mode.className='room-member-mode'; mode.textContent = m.mode||'Normal';
+          const mode = document.createElement('span'); mode.className='room-member-mode';
+          // Label matches the app's own mode branding (see the wordmark swap
+          // in setProgMode: Normal = Purple·Line, Programming = Grey·Line),
+          // colored by whether they're actually working or on a break.
+          const isProg = m.mode === 'Programming';
+          const isBreak = m.state === 'Break';
+          mode.textContent = isProg ? 'Grey Line' : 'Purple Line';
+          if(isBreak){
+            mode.style.background = 'rgba(239,68,68,0.16)';
+            mode.style.color = '#ef4444';
+          } else if(isProg){
+            mode.style.background = 'rgba(156,163,175,0.18)';
+            mode.style.color = '#9ca3af';
+          } else {
+            mode.style.background = 'rgba(147,51,234,0.16)';
+            mode.style.color = 'var(--purple-core)';
+          }
           const time = document.createElement('span'); time.className='room-member-time'; time.textContent = m.time||'';
           row.appendChild(avatarNode(m, 18)); row.appendChild(name); row.appendChild(mode); row.appendChild(time);
           roomMemberList.appendChild(row);
@@ -4980,11 +5011,15 @@ if ("serviceWorker" in navigator) {
       hideRoomBar();
     }
 
+    let pendingRestartCode = null; // room code the "room is full" error is offering to restart
+
     function openModal(mode){
       modalMode = mode;
       roomModalErr.textContent = '';
       roomCodeInput.value = '';
       pendingPhoto = null;
+      pendingRestartCode = null;
+      roomRestartBtn.style.display = 'none';
       const profile = loadProfile();
       roomNameInput.value = profile.name || '';
       setPreview(profile.photo || null);
@@ -4995,6 +5030,12 @@ if ("serviceWorker" in navigator) {
         roomProfileFields.style.display = 'block';
         roomCodeField.style.display = 'none';
         roomModalJoin.textContent = 'Save';
+        // Already in a room here (the ⚙ gear only shows once joined) — offer
+        // a way to reset it for everyone, e.g. if it's stuck full of ghosts.
+        if(roomId){
+          roomRestartBtn.textContent = 'Restart room (kicks everyone)';
+          roomRestartBtn.style.display = 'block';
+        }
       } else if(hasProfile()){
         roomModalTitle.textContent = 'Join a room';
         roomModalDesc.textContent = 'Enter the room code.';
@@ -5012,6 +5053,35 @@ if ("serviceWorker" in navigator) {
       (roomProfileFields.style.display==='none' ? roomCodeInput : roomNameInput).focus();
     }
 
+    // Clears every member out of a room's Firebase node — used to unstick a
+    // room that looks full (e.g. a run of ghost entries before they've aged
+    // past STALE_MS) or when whoever's in there just wants a clean slate.
+    async function restartRoom(code){
+      if(!configured || !code) return;
+      try{
+        await fetch(FIREBASE_DB_URL + '/rooms/' + code + '/members.json?_pl=' + Date.now(), {
+          method:'DELETE', cache:'no-store'
+        });
+      }catch(e){ console.error('[Purple Line] Room restart failed:', e); }
+    }
+    roomRestartBtn.addEventListener('click', async ()=>{
+      const code = (modalMode === 'edit') ? roomId : pendingRestartCode;
+      if(!code) return;
+      if(!confirm('Restart Room ' + code + '? Everyone currently in it will be kicked out.')) return;
+      roomRestartBtn.disabled = true;
+      await restartRoom(code);
+      roomRestartBtn.disabled = false;
+      if(modalMode === 'edit'){
+        // your own slot just got wiped along with everyone else's
+        await leaveRoom();
+        roomModalOverlay.classList.remove('open');
+      } else {
+        roomModalErr.textContent = 'Room restarted — it\'s empty now.';
+        roomRestartBtn.style.display = 'none';
+        pendingRestartCode = null;
+      }
+    });
+
     async function joinRoom(code){
       if(!ROOM_CAPACITY.hasOwnProperty(code)){
         roomModalErr.textContent = "That room code doesn't exist.";
@@ -5027,6 +5097,9 @@ if ("serviceWorker" in navigator) {
       const others = Object.keys(data.members||{}).filter(id=>isFresh((data.members[id]||{}).ts));
       if(others.length >= cap){
         roomModalErr.textContent = 'That room is full (' + cap + '/' + cap + ').';
+        pendingRestartCode = code;
+        roomRestartBtn.textContent = 'Restart room (kicks everyone)';
+        roomRestartBtn.style.display = 'block';
         roomId = null;
         roomModalJoin.disabled = false;
         return;
