@@ -4367,21 +4367,33 @@ if ("serviceWorker" in navigator) {
     async function heartbeat(){
       if(!roomId) return;
       const mine = Object.assign({ts:Date.now()}, myStatus());
-      const [data] = await Promise.all([
-        fetchRoom(),
-        pushMyStatus(mine)
-      ]);
-      data.members[memberId] = mine; // show our own fresh status immediately, even if the read above was captured a moment earlier
-      renderRoomPanel(data);
+
+      try{
+        // Update our member first, then read the room.
+        // This prevents the read from racing the write on hosted pages.
+        await pushMyStatus(mine);
+        const data = await fetchRoom();
+
+        data.members = data.members || {};
+        data.members[memberId] = mine;
+        renderRoomPanel(data);
+      }catch(e){
+        console.error('[Purple Line] Room heartbeat failed:', e);
+      }
+
+      // Schedule the next heartbeat only after this one has finished.
+      // This prevents overlapping Firebase requests.
+      if(roomId){
+        heartbeatTimer = setTimeout(heartbeat, HEARTBEAT_MS);
+      }
     }
 
     function startHeartbeat(){
       stopHeartbeat();
       heartbeat();
-      heartbeatTimer = setInterval(heartbeat, HEARTBEAT_MS);
     }
     function stopHeartbeat(){
-      if(heartbeatTimer){ clearInterval(heartbeatTimer); heartbeatTimer=null; }
+      if(heartbeatTimer){ clearTimeout(heartbeatTimer); heartbeatTimer=null; }
     }
 
     function showRoomBar(){
