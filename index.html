@@ -2372,6 +2372,9 @@ if ("serviceWorker" in navigator) {
       });
       menuVoicePanel.appendChild(chip);
     });
+
+    // Keep the volume control directly underneath the complete voice list.
+    if(voiceVolumeRow) menuVoicePanel.appendChild(voiceVolumeRow);
   }
   renderMenuVoices();
   if(menuVoiceBtn){
