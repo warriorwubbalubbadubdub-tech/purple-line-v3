@@ -4285,21 +4285,21 @@ if ("serviceWorker" in navigator) {
 
     function roomUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '.json'; }
     function memberUrl(id){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/members/' + (id||memberId) + '.json'; }
-
     async function fetchRoom(){
-      if(!configured) return {members:{}};
-      try{
-        const res = await fetch(roomUrl());
-        if(!res.ok) return {members:{}};
-        const json = await res.json();
-        const data = (json && typeof json==='object') ? json : {members:{}};
-        if(!data.members) data.members = {};
-        const now = Date.now();
-        Object.keys(data.members).forEach(id=>{
-          if(now - (data.members[id].ts||0) > STALE_MS) delete data.members[id];
-        });
-        return data;
-      }catch(e){ return {members:{}}; }
+      const r=await fetch(roomUrl(), {
+        cache:'no-store',
+        headers:{'Cache-Control':'no-cache'}
+      });
+      if(!r.ok){
+        throw new Error(`Room read failed: HTTP ${r.status}`);
+      }
+      const data=await r.json();
+      if(!data || !data.members) return {members:{}};
+      const now=Date.now();
+      for(const id of Object.keys(data.members)){
+        if(now - (data.members[id].ts || 0) > STALE_MS) delete data.members[id];
+      }
+      return data;
     }
 
     // Writes ONLY this device's own slot (/rooms/{roomId}/members/{memberId}).
@@ -4307,15 +4307,16 @@ if ("serviceWorker" in navigator) {
     // same time can never clobber each other — that whole-room
     // overwrite race was what caused the "connected / disconnected /
     // connected" flicker between devices.
-    async function pushMyStatus(status){
-      if(!configured || !roomId || !memberId) return;
-      try{
-        await fetch(memberUrl(), {
-          method: 'PUT',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(status)
-        });
-      }catch(e){}
+    async function pushMyStatus(mine){
+      const response = await fetch(memberUrl(), {
+        method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(mine),
+        cache:'no-store'
+      });
+      if(!response.ok){
+        throw new Error(`Room status update failed: HTTP ${response.status}`);
+      }
     }
 
     async function removeMyStatus(){
@@ -4363,14 +4364,12 @@ if ("serviceWorker" in navigator) {
         });
       }
     }
-
     async function heartbeat(){
       if(!roomId) return;
+
       const mine = Object.assign({ts:Date.now()}, myStatus());
 
       try{
-        // Update our member first, then read the room.
-        // This prevents the read from racing the write on hosted pages.
         await pushMyStatus(mine);
         const data = await fetchRoom();
 
@@ -4381,8 +4380,6 @@ if ("serviceWorker" in navigator) {
         console.error('[Purple Line] Room heartbeat failed:', e);
       }
 
-      // Schedule the next heartbeat only after this one has finished.
-      // This prevents overlapping Firebase requests.
       if(roomId){
         heartbeatTimer = setTimeout(heartbeat, HEARTBEAT_MS);
       }
