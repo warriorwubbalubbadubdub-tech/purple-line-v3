@@ -1489,6 +1489,15 @@
   .room-member-name{ font-weight:600; color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:56px; }
   .room-member-mode{ color:var(--text-tertiary); font-size:9px; padding:2px 5px; border-radius:6px; background:rgba(147,51,234,0.12); flex-shrink:0; }
   .room-member-time{ margin-left:auto; font-family:'Space Grotesk',sans-serif; color:var(--text-primary); font-size:10.5px; flex-shrink:0; }
+.room-member-time{ cursor:pointer; border:0; background:transparent; padding:2px 4px; border-radius:5px; }
+.room-member-time:hover{ background:rgba(147,51,234,0.10); }
+.room-member-time.break{ color:#ef4444; }
+.room-member-time.stopped{ color:var(--text-tertiary); opacity:.75; }
+.room-member-details{ display:none; width:100%; margin:2px 0 3px 24px; font-size:9.5px; line-height:1.35; color:var(--text-tertiary); }
+.room-member-details.open{ display:block; }
+.room-member-details strong{ color:var(--text-secondary); font-weight:600; }
+  .room-total-time{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin:0 0 6px; padding:6px 0 7px; border-bottom:1px solid rgba(147,51,234,0.12); font-size:10.5px; color:var(--text-secondary); }
+  .room-total-time span:last-child{ font-family:'Space Grotesk',sans-serif; color:var(--purple-core); font-weight:700; font-variant-numeric:tabular-nums; }
   .room-empty-note{ font-size:10.5px; color:var(--text-tertiary); padding:5px 0; }
   .room-leave-btn{ margin-top:8px; width:100%; padding:6px; border-radius:8px; border:1px solid rgba(239,68,68,0.35); background:rgba(239,68,68,0.08); color:#ef4444; font-size:10.5px; font-weight:600; cursor:pointer; }
   .csharp-badge{
@@ -2886,8 +2895,25 @@ if ("serviceWorker" in navigator) {
     const d = egyptDateStr();
     if(d !== lastEgyptDay){
       lastEgyptDay = d;
+      // A new Egypt day starts a completely fresh timer state at 12:00 AM.
+      // This also prevents an active Work/Break state from carrying into the
+      // next day after a refresh or while the app was backgrounded.
       totalWorkMs = 0;
       totalBreakMs = 0;
+      phase = 'idle';
+      activeTaskId = null;
+      phaseStartedAt = 0;
+      elapsedWork = 0;
+      breakStartedAt = 0;
+      breakDashPhase = null;
+      breakDashProgress = 0;
+      taskTip = null;
+      restTip = null;
+      restSkipOpen = false;
+      lastTickAt = 0;
+      clearInterval(timerId);
+      timerId = null;
+      clearTimerState();
       if(menuStatusPanel.classList.contains('open')){
         statusWorkVal.textContent = formatTime(0);
         statusBreakVal.textContent = formatTime(0);
@@ -4411,7 +4437,8 @@ if ("serviceWorker" in navigator) {
     // the room, we filter through isFresh() so a ghost never blocks capacity or
     // shows up as "someone is here" — we just never delete their row, since another
     // device racing to delete the same key is how the old flicker bug happened.
-    const SESSION_KEY = 'purple-line-room-session'; // sessionStorage → gone once the app/tab is closed, so the code is asked again next time
+    const SESSION_KEY = 'purple-line-room-session'; // sessionStorage → active room only
+    const ROOM_MEMBER_ID_KEY = 'purple-line-room-member-id-v2'; // localStorage → same member identity when leaving/rejoining
     const PROFILE_KEY = 'purple-line-room-profile'; // localStorage → set once, edited only via the settings (⚙) button
     const PHOTO_SIZE = 96; // uploaded photos are downscaled to this square so they stay small enough to sync
 
@@ -4618,6 +4645,85 @@ if ("serviceWorker" in navigator) {
     let modalMode = 'join'; // 'join' | 'edit'
     let pendingPhoto = null; // dataURL picked in this modal session, not yet saved
 
+    // Work accumulated only while this device is a member of the current room.
+    // This deliberately excludes break time and any work done before joining.
+    let roomWorkMs = 0;
+    let roomLastWorkSample = null;
+    let roomDayKey = egyptDateStr();
+    const ROOM_WORK_KEY = 'purple-line-room-work-v1';
+    function getStableMemberId(){
+      let id = null;
+      try{ id = localStorage.getItem(ROOM_MEMBER_ID_KEY); }catch(e){}
+      if(!id){
+        id = 'm-' + Math.random().toString(36).slice(2,10);
+        try{ localStorage.setItem(ROOM_MEMBER_ID_KEY, id); }catch(e){}
+      }
+      return id;
+    }
+    function roomDailyMemberUrl(room, day, member){
+      return FIREBASE_DB_URL + '/rooms/' + room + '/daily/' + day + '/members/' + member + '.json';
+    }
+    function roomDailyUrl(room, day){
+      return FIREBASE_DB_URL + '/rooms/' + room + '/daily/' + day + '.json';
+    }
+    function currentAppWorkTotal(){
+      const base = (typeof totalWorkMs === 'number') ? totalWorkMs : 0;
+      const live = (typeof phase !== 'undefined' && phase==='work' && lastTickAt)
+        ? Math.max(0, Date.now()-lastTickAt) : 0;
+      return base + live;
+    }
+    function resetRoomWorkTracking(){
+      roomWorkMs = 0;
+      roomDayKey = egyptDateStr();
+      roomLastWorkSample = currentAppWorkTotal();
+      try{ sessionStorage.removeItem(ROOM_WORK_KEY); }catch(e){}
+    }
+    async function restoreRoomWorkTracking(){
+      roomDayKey = egyptDateStr();
+      let saved = null;
+      try{ saved = JSON.parse(sessionStorage.getItem(ROOM_WORK_KEY) || 'null'); }catch(e){}
+      roomWorkMs = (saved && saved.roomId===roomId && saved.memberId===memberId && saved.day===roomDayKey)
+        ? (Number(saved.ms) || 0) : 0;
+
+      // Firebase is the persistent source of truth for today's room total.
+      try{
+        const res = await fetch(roomDailyMemberUrl(roomId, roomDayKey, memberId) + '?_pl=' + Date.now(), {
+          cache:'no-store', headers:{'Cache-Control':'no-cache'}
+        });
+        if(res.ok){
+          const savedRoom = await res.json();
+          if(savedRoom && typeof savedRoom==='object'){
+            roomWorkMs = Math.max(0, Number(savedRoom.workTotalMs) || 0);
+          }
+        }
+      }catch(e){
+        console.warn('[Purple Line] Could not restore room daily state:', e);
+      }
+      roomLastWorkSample = currentAppWorkTotal();
+      persistRoomWork();
+    }
+    function persistRoomWork(){
+      try{
+        sessionStorage.setItem(ROOM_WORK_KEY, JSON.stringify({
+          roomId: roomId, memberId: memberId, day: roomDayKey, ms: Math.max(0, roomWorkMs)
+        }));
+      }catch(e){}
+    }
+    function sampleRoomWork(){
+      const current = currentAppWorkTotal();
+      if(roomLastWorkSample === null){
+        roomLastWorkSample = current;
+        return;
+      }
+      // If the app's per-mode total was swapped/reset, start the new sample
+      // from its current value instead of producing a negative delta.
+      roomWorkMs += current >= roomLastWorkSample
+        ? current - roomLastWorkSample
+        : current;
+      roomLastWorkSample = current;
+      persistRoomWork();
+    }
+
     function loadProfile(){
       try{ return JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null') || {}; }catch(e){ return {}; }
     }
@@ -4681,6 +4787,38 @@ if ("serviceWorker" in navigator) {
     function roomUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '.json'; }
     function memberUrl(id){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/members/' + (id||memberId) + '.json'; }
     function paperUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/paper.json'; }
+
+    async function pushRoomDailyState(status){
+      if(!configured || !roomId || !memberId) return;
+      const day = roomDayKey || egyptDateStr();
+      const persistent = {
+        name: status.name || 'Studying',
+        photo: status.photo || '',
+        workTotalMs: Math.max(0, Number(status.workTotalMs)||0),
+        voiceId: status.voiceId || '',
+        voiceName: status.voiceName || 'Unknown',
+        state: status.state || 'Idle',
+        mode: status.mode || 'Normal',
+        updatedAt: Date.now()
+      };
+      const res = await fetch(roomDailyMemberUrl(roomId, day, memberId) + '?_pl=' + Date.now(), {
+        method:'PUT',
+        headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},
+        cache:'no-store',
+        body:JSON.stringify(persistent)
+      });
+      if(!res.ok) throw new Error('Room daily state update failed: HTTP ' + res.status);
+    }
+
+    async function fetchRoomDaily(day){
+      if(!configured || !roomId) return {members:{}};
+      const res = await fetch(roomDailyUrl(roomId, day) + '?_pl=' + Date.now(), {
+        cache:'no-store', headers:{'Cache-Control':'no-cache'}
+      });
+      if(!res.ok) throw new Error('Room daily read failed: HTTP ' + res.status);
+      const json = await res.json();
+      return (json && typeof json==='object') ? json : {members:{}};
+    }
 
     // ---- shared black paper (a room-wide drawing anyone can add to) ----
     // Lives at /rooms/{roomId}/paper as {image: <jpeg dataURL>, by, ts}. It's a
@@ -4897,68 +5035,136 @@ if ("serviceWorker" in navigator) {
       const mode = document.body.classList.contains('prog-mode') ? 'Programming' : 'Normal';
       const profile = loadProfile();
       const base = {photo: profile.photo || '', name: profile.name || 'Studying'};
-      if(typeof phase === 'undefined') return Object.assign(base, {state:'Idle', time:'--:--', mode:mode});
+      const liveWorkTotal = roomWorkMs;
+      const voicePack = VOICE_PACKS.find(v=>v.id===selectedVoiceId);
+      const voiceName = voicePack ? voicePack.name : 'Unknown';
+      if(typeof phase === 'undefined') return Object.assign(base, {state:'Idle', time:'--:--', workTotalMs:liveWorkTotal, voiceId:selectedVoiceId, voiceName:voiceName, mode:mode});
       if(phase==='work'){
         const ms = elapsedWork + (phaseStartedAt ? Date.now()-phaseStartedAt : 0);
-        return Object.assign(base, {state:'Studying', time: formatTime(ms), mode:mode});
+        return Object.assign(base, {state:'Studying', time: formatTime(ms), workTotalMs:liveWorkTotal, voiceId:selectedVoiceId, voiceName:voiceName, mode:mode});
       }
       if(phase==='break'){
         const ms = breakStartedAt ? Date.now()-breakStartedAt : 0;
-        return Object.assign(base, {state:'Break', time: formatTime(ms), mode:mode});
+        return Object.assign(base, {state:'Break', time: formatTime(ms), workTotalMs:liveWorkTotal, voiceId:selectedVoiceId, voiceName:voiceName, mode:mode});
       }
-      return Object.assign(base, {state:'Idle', time:'--:--', mode:mode});
+      return Object.assign(base, {state:'Idle', time:'--:--', workTotalMs:liveWorkTotal, voiceId:selectedVoiceId, voiceName:voiceName, mode:mode});
+    }
+
+    function escapeHtml(value){
+      const div = document.createElement('div');
+      div.textContent = value == null ? '' : String(value);
+      return div.innerHTML;
     }
 
     function renderRoomPanel(data){
       renderPaperThumbnail(data.paper); // shared drawing — same for everyone in the room
       const cap = ROOM_CAPACITY[roomId] || 4;
-      const others = Object.keys(data.members||{}).filter(id=>id!==memberId && isFresh((data.members[id]||{}).ts));
+      const freshMembers = Object.keys(data.members||{}).filter(id=>isFresh((data.members[id]||{}).ts));
+      const dailyMembers = (data.daily && data.daily.members && typeof data.daily.members==='object') ? data.daily.members : {};
+      const others = freshMembers.filter(id=>id!==memberId);
       roomStatusDot.classList.toggle('online', others.length>0);
       roomStatusTitle.textContent = 'Room ' + roomId + ' · ' + (others.length+1) + '/' + cap;
       roomMemberList.innerHTML = '';
-      if(others.length===0){
-        const note = document.createElement('div');
-        note.className = 'room-empty-note';
-        note.textContent = 'No one else is here yet.';
-        roomMemberList.appendChild(note);
-      } else {
-        others.forEach(id=>{
-          const m = data.members[id];
-          const row = document.createElement('div');
-          row.className = 'room-member-row';
-          const name = document.createElement('span'); name.className='room-member-name'; name.textContent = m.name || 'Studying';
-          const mode = document.createElement('span'); mode.className='room-member-mode';
-          // Label matches the app's own mode branding (see the wordmark swap
-          // in setProgMode: Normal = Purple·Line, Programming = Grey·Line),
-          // colored by whether they're actually working or on a break.
-          const isProg = m.mode === 'Programming';
-          const isBreak = m.state === 'Break';
-          mode.textContent = isProg ? 'Grey Line' : 'Purple Line';
-          if(isBreak){
-            mode.style.background = 'rgba(239,68,68,0.16)';
-            mode.style.color = '#ef4444';
-          } else if(isProg){
-            mode.style.background = 'rgba(156,163,175,0.18)';
-            mode.style.color = '#9ca3af';
-          } else {
-            mode.style.background = 'rgba(147,51,234,0.16)';
-            mode.style.color = 'var(--purple-core)';
-          }
-          const time = document.createElement('span'); time.className='room-member-time'; time.textContent = m.time||'';
-          row.appendChild(avatarNode(m, 18)); row.appendChild(name); row.appendChild(mode); row.appendChild(time);
-          roomMemberList.appendChild(row);
+
+      // Room total = work time only, summed across every currently connected member.
+      const mine = data.members && data.members[memberId] ? data.members[memberId] : myStatus();
+      const mergedMembers = Object.assign({}, dailyMembers);
+      freshMembers.forEach(id=>{ mergedMembers[id] = data.members[id] || {}; });
+      mergedMembers[memberId] = mine;
+      const allMembers = Object.keys(mergedMembers).map(id=>mergedMembers[id] || {});
+      const roomTotalWorkMs = allMembers.reduce((sum,m)=>sum + (Number(m.workTotalMs)||0), 0);
+
+      const totalRow = document.createElement('div');
+      totalRow.className = 'room-total-time';
+      const totalLabel = document.createElement('span');
+      totalLabel.textContent = 'Total studied in room';
+      const totalValue = document.createElement('span');
+      totalValue.textContent = formatTime(roomTotalWorkMs);
+      totalRow.appendChild(totalLabel);
+      totalRow.appendChild(totalValue);
+      roomMemberList.appendChild(totalRow);
+
+      // Show everyone currently in the room, including this device.
+      const orderedMembers = Object.keys(mergedMembers);
+      if(!orderedMembers.includes(memberId)) orderedMembers.push(memberId);
+
+      orderedMembers.forEach(id=>{
+        const m = (id===memberId) ? mine : mergedMembers[id];
+        if(!m) return;
+
+        const row = document.createElement('div');
+        row.className = 'room-member-row';
+        row.style.flexWrap = 'wrap';
+
+        const name = document.createElement('span');
+        name.className='room-member-name';
+        name.textContent = (id===memberId ? ((m.name || 'Studying') + ' (You)') : (m.name || 'Studying'));
+
+        const mode = document.createElement('span');
+        mode.className='room-member-mode';
+        const isProg = m.mode === 'Programming';
+        const isActiveMember = freshMembers.includes(id);
+        const isBreak = isActiveMember && m.state === 'Break';
+        const isWorking = isActiveMember && m.state === 'Studying';
+        mode.textContent = isProg ? 'Grey Line' : 'Purple Line';
+        if(isBreak){
+          mode.style.background = 'rgba(239,68,68,0.16)';
+          mode.style.color = '#ef4444';
+        } else if(isProg){
+          mode.style.background = 'rgba(156,163,175,0.18)';
+          mode.style.color = '#9ca3af';
+        } else {
+          mode.style.background = 'rgba(147,51,234,0.16)';
+          mode.style.color = 'var(--purple-core)';
+        }
+
+        // The timer beside each member is their cumulative WORK total only.
+        // It turns red during break, and stays visually stopped while idle.
+        const time = document.createElement('button');
+        time.type = 'button';
+        time.className='room-member-time' + (isBreak ? ' break' : '') + (!isWorking && !isBreak ? ' stopped' : '');
+        time.textContent = formatTime(Number(m.workTotalMs)||0);
+        time.title = 'Click to see current state and voice';
+        time.dataset.memberId = id;
+        time.setAttribute('aria-label', 'Show ' + (m.name || 'member') + ' state and voice');
+
+        const details = document.createElement('div');
+        details.className='room-member-details';
+        details.dataset.memberDetails = id;
+        const stateText = isBreak ? 'Break' : (isWorking ? 'Studying' : 'Stopped');
+        const voiceText = m.voiceName || 'Unknown';
+        details.innerHTML = '<strong>State:</strong> ' + stateText + ' &nbsp;·&nbsp; <strong>Voice:</strong> ' + escapeHtml(voiceText);
+
+        time.addEventListener('click', ()=>{
+          details.classList.toggle('open');
         });
-      }
+
+        row.appendChild(avatarNode(m, 18));
+        row.appendChild(name);
+        row.appendChild(mode);
+        row.appendChild(time);
+        row.appendChild(details);
+        roomMemberList.appendChild(row);
+      });
     }
     async function heartbeat(){
       if(!roomId || !memberId) return;
 
       const activeRoom = roomId;
       const activeMember = memberId;
+      const currentDay = egyptDateStr();
+      if(currentDay !== roomDayKey){
+        roomDayKey = currentDay;
+        roomWorkMs = 0;
+        roomLastWorkSample = currentAppWorkTotal();
+        try{ sessionStorage.removeItem(ROOM_WORK_KEY); }catch(e){}
+      }
+      sampleRoomWork();
       const mine = Object.assign({ts:Date.now()}, myStatus());
 
       try{
         await pushMyStatus(mine);
+        await pushRoomDailyState(mine);
 
         // Ignore a response if the user left/joined another room while the
         // request was in flight.
@@ -4970,6 +5176,10 @@ if ("serviceWorker" in navigator) {
 
         data.members = data.members || {};
         data.members[activeMember] = mine;
+        data.daily = await fetchRoomDaily(roomDayKey);
+        if(roomId !== activeRoom || memberId !== activeMember) return;
+        data.daily.members = data.daily.members || {};
+        data.daily.members[activeMember] = mine;
         renderRoomPanel(data);
       }catch(e){
         console.error('[Purple Line] Room heartbeat failed:', e);
@@ -5003,10 +5213,19 @@ if ("serviceWorker" in navigator) {
     }
 
     async function leaveRoom(){
+      if(roomId && memberId){
+        sampleRoomWork();
+        const leavingStatus = myStatus();
+        leavingStatus.state = 'Idle';
+        leavingStatus.time = '--:--';
+        try{ await pushRoomDailyState(leavingStatus); }catch(e){ console.warn('[Purple Line] Could not save room state on leave:', e); }
+      }
       await removeMyStatus();
       stopHeartbeat();
       stopPetAnim();
       roomId = null; memberId = null;
+      roomWorkMs = 0;
+      roomLastWorkSample = null;
       try{ sessionStorage.removeItem(SESSION_KEY); }catch(e){}
       hideRoomBar();
     }
@@ -5104,8 +5323,10 @@ if ("serviceWorker" in navigator) {
         roomModalJoin.disabled = false;
         return;
       }
-      memberId = 'm-' + Math.random().toString(36).slice(2,10);
+      memberId = getStableMemberId();
+      resetRoomWorkTracking();
       try{ sessionStorage.setItem(SESSION_KEY, JSON.stringify({roomId:roomId, memberId:memberId})); }catch(e){}
+      await restoreRoomWorkTracking();
       roomModalJoin.disabled = false;
       roomModalOverlay.classList.remove('open');
       roomCodeInput.value = '';
@@ -5170,12 +5391,16 @@ if ("serviceWorker" in navigator) {
     // symptom, since two of your own ghost rows can eat a small room's capacity.
     // Restoring the same memberId here means a refresh re-attaches to the row
     // you already had instead of minting another one.
-    function restoreRoomSession(){
+    async function restoreRoomSession(){
       let saved = null;
       try{ saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); }catch(e){}
       if(!saved || !saved.roomId || !saved.memberId) return;
       roomId = saved.roomId;
       memberId = saved.memberId;
+      // Preserve the existing session member ID, and make it the persistent
+      // identity so leaving and joining again never creates a new daily member.
+      try{ localStorage.setItem(ROOM_MEMBER_ID_KEY, memberId); }catch(e){}
+      await restoreRoomWorkTracking();
       showRoomBar();
       startHeartbeat();
     }
