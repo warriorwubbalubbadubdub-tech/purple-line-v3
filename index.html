@@ -4290,15 +4290,23 @@ if ("serviceWorker" in navigator) {
         cache:'no-store',
         headers:{'Cache-Control':'no-cache'}
       });
+
       if(!r.ok){
         throw new Error(`Room read failed: HTTP ${r.status}`);
       }
+
       const data=await r.json();
-      if(!data || !data.members) return {members:{}};
-      const now=Date.now();
-      for(const id of Object.keys(data.members)){
-        if(now - (data.members[id].ts || 0) > STALE_MS) delete data.members[id];
+      if(!data || typeof data !== 'object'){
+        return {members:{}};
       }
+
+      if(!data.members || typeof data.members !== 'object'){
+        data.members = {};
+      }
+
+      // Keep every member returned by Firebase intact.
+      // Do not delete members here based on the local clock; this was causing
+      // hosted pages to lose valid members before the Room UI could render them.
       return data;
     }
 
@@ -4307,16 +4315,15 @@ if ("serviceWorker" in navigator) {
     // same time can never clobber each other — that whole-room
     // overwrite race was what caused the "connected / disconnected /
     // connected" flicker between devices.
-    async function pushMyStatus(mine){
-      const response = await fetch(memberUrl(), {
-        method:'PUT',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(mine),
-        cache:'no-store'
-      });
-      if(!response.ok){
-        throw new Error(`Room status update failed: HTTP ${response.status}`);
-      }
+    async function pushMyStatus(status){
+      if(!configured || !roomId || !memberId) return;
+      try{
+        await fetch(memberUrl(), {
+          method: 'PUT',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(status)
+        });
+      }catch(e){}
     }
 
     async function removeMyStatus(){
@@ -4375,6 +4382,8 @@ if ("serviceWorker" in navigator) {
 
         data.members = data.members || {};
         data.members[memberId] = mine;
+
+        // Always render the complete Firebase member snapshot.
         renderRoomPanel(data);
       }catch(e){
         console.error('[Purple Line] Room heartbeat failed:', e);
