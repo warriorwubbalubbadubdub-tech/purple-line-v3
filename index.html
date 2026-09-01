@@ -1316,7 +1316,7 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
-  /* ---------- black paper (shared room color note) ---------- */
+  /* ---------- black paper (shared room drawing) ---------- */
   .pet-streak-row{
     display:flex;
     align-items:flex-end;
@@ -1324,57 +1324,147 @@
     gap:10px;
     position:relative;
   }
+  /* closed black book, shown before any drawing has been saved */
   .paper-note{
     width:26px;
     height:34px;
     flex-shrink:0;
     margin-bottom:6px;
     border:none;
-    border-radius:2px;
-    background:#141014;
+    border-radius:2px 6px 6px 2px;
+    background:#141014 no-repeat center/cover;
     box-shadow:0 2px 6px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.06);
     cursor:pointer;
     padding:0;
+    position:relative;
     transition:transform .15s ease, box-shadow .15s ease;
   }
+  .paper-note::before{ /* spine */
+    content:'';
+    position:absolute;
+    left:3px; top:2px; bottom:2px;
+    width:2px;
+    background:rgba(255,255,255,0.16);
+    border-radius:1px;
+  }
+  .paper-note::after{ /* page edges */
+    content:'';
+    position:absolute;
+    right:2px; top:3px; bottom:3px;
+    width:2px;
+    background:rgba(255,255,255,0.1);
+    border-radius:0 2px 2px 0;
+  }
+  .paper-note.has-drawing::before,
+  .paper-note.has-drawing::after{ display:none; }
   .paper-note:hover{ transform:translateY(-1px); box-shadow:0 4px 9px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.1); }
   .paper-note:active{ transform:scale(0.94); }
-  .paper-drawer{
+
+  /* fullscreen drawing editor */
+  .draw-overlay{
     display:none;
-    position:absolute;
-    bottom:100%;
-    left:50%;
-    transform:translateX(-50%);
-    margin-bottom:8px;
-    padding:9px;
-    background:var(--app-surface);
-    border:1px solid rgba(147,51,234,0.25);
-    border-radius:10px;
-    box-shadow:0 10px 28px rgba(0,0,0,0.35);
-    z-index:5;
-    width:max-content;
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,0.75);
+    z-index:70;
+    align-items:center;
+    justify-content:center;
+    padding:calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));
   }
-  .paper-drawer.open{ display:block; }
-  .paper-drawer-swatches{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
-  .paper-swatch{
-    width:22px;
-    height:22px;
+  .draw-overlay.open{ display:flex; }
+  .draw-panel{
+    width:min(94vw, 480px);
+    max-height:100%;
+    background:#000;
+    border-radius:16px;
+    padding:12px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.6);
+    border:1px solid rgba(147,51,234,0.3);
+  }
+  .draw-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .draw-title{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:13px;
+    font-weight:600;
+    color:#f2edf7;
+  }
+  .draw-exit-btn{
+    width:28px; height:28px;
+    border:none;
     border-radius:50%;
-    border:1px solid rgba(0,0,0,0.15);
+    background:rgba(255,255,255,0.1);
+    color:#f2edf7;
+    font-size:14px;
+    line-height:1;
+    cursor:pointer;
+  }
+  .draw-exit-btn:hover{ background:rgba(255,255,255,0.18); }
+  .draw-colors{
+    display:flex;
+    gap:7px;
+    flex-wrap:wrap;
+    justify-content:center;
+  }
+  .draw-color-swatch{
+    width:24px; height:24px;
+    border-radius:50%;
+    border:1px solid rgba(255,255,255,0.2);
     cursor:pointer;
     padding:0;
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,0.15);
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,0.2);
   }
-  .paper-swatch.selected{ box-shadow:0 0 0 2px var(--app-surface), 0 0 0 4px var(--purple-core); }
-  .paper-updated{
-    margin-top:6px;
-    padding-top:6px;
-    border-top:1px solid rgba(147,51,234,0.14);
-    font-size:9.5px;
-    color:var(--text-tertiary);
+  .draw-color-swatch.selected{ box-shadow:0 0 0 2px #000, 0 0 0 4px var(--purple-core); }
+  .draw-canvas-wrap{
+    flex:1;
+    min-height:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:#000;
+    border-radius:10px;
+    overflow:hidden;
+  }
+  #drawCanvas{
+    width:100%;
+    max-height:60vh;
+    aspect-ratio:3/4;
+    display:block;
+    touch-action:none;
+    cursor:crosshair;
+    border-radius:10px;
+  }
+  .draw-foot{
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .draw-status{
+    flex:1;
+    font-size:10.5px;
+    color:#a297b1;
     white-space:nowrap;
-    text-align:center;
+    overflow:hidden;
+    text-overflow:ellipsis;
   }
+  .draw-clear-btn, .draw-save-btn{
+    padding:8px 14px;
+    border:none;
+    border-radius:10px;
+    font-size:12px;
+    font-weight:600;
+    cursor:pointer;
+  }
+  .draw-clear-btn{ background:rgba(255,255,255,0.1); color:#f2edf7; }
+  .draw-clear-btn:hover{ background:rgba(255,255,255,0.18); }
+  .draw-save-btn{ background:var(--purple-bright); color:#fff; }
+  .draw-save-btn:hover{ background:var(--purple-core); }
 
   .room-member-row{ display:flex; align-items:center; gap:6px; padding:5px 0; border-top:1px solid rgba(147,51,234,0.12); font-size:11px; color:var(--text-secondary); }
   .room-member-row:first-child{ border-top:none; }
@@ -1829,14 +1919,28 @@ if ("serviceWorker" in navigator) {
       <div class="pet-streak-box" id="petStreakBox">
         <div class="pet-streak-row">
           <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
-          <button type="button" class="paper-note" id="paperNoteBtn" title="Room note" aria-label="Open room note"></button>
-          <div class="paper-drawer" id="paperDrawer">
-            <div class="paper-drawer-swatches" id="paperSwatches"></div>
-            <div class="paper-updated" id="paperUpdated"></div>
-          </div>
+          <button type="button" class="paper-note" id="paperNoteBtn" title="Room drawing" aria-label="Open room drawing"></button>
         </div>
       </div>
       <button type="button" class="room-leave-btn" id="roomLeaveBtn">Leave Room</button>
+    </div>
+  </div>
+
+  <div class="draw-overlay" id="drawOverlay">
+    <div class="draw-panel">
+      <div class="draw-head">
+        <div class="draw-title">Room paper</div>
+        <button type="button" class="draw-exit-btn" id="drawExitBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="draw-colors" id="drawColors"></div>
+      <div class="draw-canvas-wrap">
+        <canvas id="drawCanvas" width="600" height="800"></canvas>
+      </div>
+      <div class="draw-foot">
+        <div class="draw-status" id="drawStatus"></div>
+        <button type="button" class="draw-clear-btn" id="drawClearBtn">Clear</button>
+        <button type="button" class="draw-save-btn" id="drawSaveBtn">Save</button>
+      </div>
     </div>
   </div>
 
@@ -4318,9 +4422,6 @@ if ("serviceWorker" in navigator) {
     const roomLeaveBtn = document.getElementById('roomLeaveBtn');
     const petStreakCat = document.getElementById('petStreakCat');
     const paperNoteBtn = document.getElementById('paperNoteBtn');
-    const paperDrawer = document.getElementById('paperDrawer');
-    const paperSwatches = document.getElementById('paperSwatches');
-    const paperUpdated = document.getElementById('paperUpdated');
     if(!roomModeBtn) return;
 
     // ---- pet streak (blinking cat) animation ----
@@ -4562,55 +4663,135 @@ if ("serviceWorker" in navigator) {
     function memberUrl(id){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/members/' + (id||memberId) + '.json'; }
     function paperUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/paper.json'; }
 
-    // ---- shared black paper (a room-wide color note anyone can change) ----
-    // Lives at /rooms/{roomId}/paper. It's a single shared key (not per-member,
-    // unlike presence), so whoever writes last wins and everyone in the room
-    // sees the same color — that's the whole point, it's a shared note, not a
-    // personal one.
-    const PAPER_COLORS = [
-      {key:'red',    hex:'#c0392b'},
-      {key:'white',  hex:'#f4f2f0'},
-      {key:'grey',   hex:'#8a8a8f'},
-      {key:'purple', hex:'#7c1fd1'},
-      {key:'gold',   hex:'#c9a341'},
-      {key:'black',  hex:'#141014'}
+    // ---- shared black paper (a room-wide drawing anyone can add to) ----
+    // Lives at /rooms/{roomId}/paper as {image: <jpeg dataURL>, by, ts}. It's a
+    // single shared key (not per-member, unlike presence), so whoever saves
+    // last wins and everyone in the room sees the same drawing — that's the
+    // whole point, it's a shared paper, not a personal one.
+    const DRAW_COLORS = [
+      {key:'red',    hex:'#e74c3c'},
+      {key:'green',  hex:'#2ecc71'},
+      {key:'yellow', hex:'#f1c40f'},
+      {key:'purple', hex:'#a855f7'},
+      {key:'grey',   hex:'#9a9aa0'},
+      {key:'black',  hex:'#141014'}, // paper is always black, so this doubles as an eraser
+      {key:'white',  hex:'#f4f2f0'}
     ];
-    let currentPaper = null; // {color, by, ts} last known state
-    function buildPaperSwatches(){
-      if(!paperSwatches) return;
-      paperSwatches.innerHTML = '';
-      PAPER_COLORS.forEach(c=>{
+    let currentPaper = null;  // {image, by, ts} last known saved state
+    let drawColor = 'white';
+    let drawCtx = null;
+    let isDrawingStroke = false;
+    let lastPt = null;
+
+    const drawOverlay = document.getElementById('drawOverlay');
+    const drawCanvas = document.getElementById('drawCanvas');
+    const drawColorsEl = document.getElementById('drawColors');
+    const drawExitBtn = document.getElementById('drawExitBtn');
+    const drawSaveBtn = document.getElementById('drawSaveBtn');
+    const drawClearBtn = document.getElementById('drawClearBtn');
+    const drawStatus = document.getElementById('drawStatus');
+
+    function fillCanvasBlack(){
+      if(!drawCtx) return;
+      drawCtx.fillStyle = '#000';
+      drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+    }
+    function buildDrawColors(){
+      if(!drawColorsEl) return;
+      drawColorsEl.innerHTML = '';
+      DRAW_COLORS.forEach(c=>{
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'paper-swatch';
+        b.className = 'draw-color-swatch';
         b.style.background = c.hex;
         b.title = c.key;
-        b.addEventListener('click', ()=> pickPaperColor(c.key));
         b.dataset.color = c.key;
-        paperSwatches.appendChild(b);
+        b.addEventListener('click', ()=>{
+          drawColor = c.key;
+          Array.from(drawColorsEl.children).forEach(el=> el.classList.toggle('selected', el.dataset.color===drawColor));
+        });
+        drawColorsEl.appendChild(b);
       });
     }
-    buildPaperSwatches();
-    function renderPaper(paper){
+    buildDrawColors();
+
+    // The small book icon next to the cat: plain black book until a drawing
+    // has been saved, then it shows the drawing itself as its cover.
+    function renderPaperThumbnail(paper){
       currentPaper = paper || null;
-      const color = (paper && paper.color) || 'black';
-      const found = PAPER_COLORS.find(c=>c.key===color) || PAPER_COLORS[5];
-      if(paperNoteBtn) paperNoteBtn.style.background = found.hex;
-      if(paperSwatches){
-        Array.from(paperSwatches.children).forEach(el=>{
-          el.classList.toggle('selected', el.dataset.color === color);
-        });
-      }
-      if(paperUpdated){
-        paperUpdated.textContent = (paper && paper.by) ? ('updated by ' + paper.by) : 'tap a color to update';
+      if(!paperNoteBtn) return;
+      if(paper && paper.image){
+        paperNoteBtn.style.backgroundImage = 'url(' + paper.image + ')';
+        paperNoteBtn.classList.add('has-drawing');
+      } else {
+        paperNoteBtn.style.backgroundImage = 'none';
+        paperNoteBtn.classList.remove('has-drawing');
       }
     }
-    async function pickPaperColor(color){
-      paperDrawer.classList.remove('open');
-      if(!configured || !roomId) return;
+    renderPaperThumbnail(null);
+
+    function canvasPointFromEvent(e){
+      const rect = drawCanvas.getBoundingClientRect();
+      const scaleX = drawCanvas.width / rect.width;
+      const scaleY = drawCanvas.height / rect.height;
+      return { x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY };
+    }
+    function strokeDown(e){
+      isDrawingStroke = true;
+      lastPt = canvasPointFromEvent(e);
+      try{ drawCanvas.setPointerCapture(e.pointerId); }catch(err){}
+      // a plain tap (no drag) still leaves a dot
+      drawDotOrLine(lastPt, lastPt);
+    }
+    function strokeMove(e){
+      if(!isDrawingStroke) return;
+      const pt = canvasPointFromEvent(e);
+      drawDotOrLine(lastPt, pt);
+      lastPt = pt;
+    }
+    function strokeUp(){ isDrawingStroke = false; lastPt = null; }
+    function drawDotOrLine(from, to){
+      if(!drawCtx) return;
+      const hex = (DRAW_COLORS.find(c=>c.key===drawColor) || DRAW_COLORS[6]).hex;
+      drawCtx.strokeStyle = hex;
+      drawCtx.fillStyle = hex;
+      drawCtx.lineWidth = 10;
+      drawCtx.lineCap = 'round';
+      drawCtx.lineJoin = 'round';
+      drawCtx.beginPath();
+      drawCtx.moveTo(from.x, from.y);
+      drawCtx.lineTo(to.x, to.y);
+      drawCtx.stroke();
+    }
+    if(drawCanvas){
+      drawCanvas.addEventListener('pointerdown', e=>{ e.preventDefault(); strokeDown(e); });
+      drawCanvas.addEventListener('pointermove', e=>{ e.preventDefault(); strokeMove(e); });
+      drawCanvas.addEventListener('pointerup', strokeUp);
+      drawCanvas.addEventListener('pointercancel', strokeUp);
+    }
+
+    function openDrawFullscreen(){
+      if(!drawOverlay) return;
+      if(!drawCtx) drawCtx = drawCanvas.getContext('2d');
+      fillCanvasBlack();
+      if(currentPaper && currentPaper.image){
+        const img = new Image();
+        img.onload = ()=>{ drawCtx.drawImage(img, 0, 0, drawCanvas.width, drawCanvas.height); };
+        img.src = currentPaper.image;
+      }
+      drawStatus.textContent = (currentPaper && currentPaper.by) ? ('last updated by ' + currentPaper.by) : 'draw something, then Save';
+      drawOverlay.classList.add('open');
+    }
+    function closeDrawFullscreen(){
+      drawOverlay.classList.remove('open');
+    }
+    async function saveDrawing(){
+      if(!configured || !roomId) { closeDrawFullscreen(); return; }
       const profile = loadProfile();
-      const paper = {color: color, by: profile.name || 'Someone', ts: Date.now()};
-      renderPaper(paper); // optimistic — show it instantly, everyone else picks it up on their next poll
+      const image = drawCanvas.toDataURL('image/jpeg', 0.72);
+      const paper = { image: image, by: profile.name || 'Someone', ts: Date.now() };
+      renderPaperThumbnail(paper); // optimistic — everyone else picks it up on their next poll
+      drawStatus.textContent = 'Saving…';
       try{
         await fetch(paperUrl() + '?_pl=' + Date.now(), {
           method:'PUT',
@@ -4618,20 +4799,17 @@ if ("serviceWorker" in navigator) {
           cache:'no-store',
           body:JSON.stringify(paper)
         });
-      }catch(e){ console.error('[Purple Line] Paper update failed:', e); }
-    }
-    renderPaper(null);
-    if(paperNoteBtn){
-      paperNoteBtn.addEventListener('click', e=>{
-        e.stopPropagation();
-        paperDrawer.classList.toggle('open');
-      });
-    }
-    document.addEventListener('click', e=>{
-      if(paperDrawer && paperDrawer.classList.contains('open') && !paperDrawer.contains(e.target) && e.target!==paperNoteBtn){
-        paperDrawer.classList.remove('open');
+        drawStatus.textContent = 'Saved ✓ — keep drawing or exit';
+      }catch(e){
+        console.error('[Purple Line] Paper save failed:', e);
+        drawStatus.textContent = 'Save failed — check connection';
       }
-    });
+    }
+    if(paperNoteBtn) paperNoteBtn.addEventListener('click', openDrawFullscreen);
+    if(drawExitBtn) drawExitBtn.addEventListener('click', closeDrawFullscreen);
+    if(drawClearBtn) drawClearBtn.addEventListener('click', fillCanvasBlack);
+    if(drawSaveBtn) drawSaveBtn.addEventListener('click', saveDrawing);
+    if(drawOverlay) drawOverlay.addEventListener('click', e=>{ if(e.target===drawOverlay) closeDrawFullscreen(); });
     async function fetchRoom(){
       if(!configured) return {members:{}};
 
@@ -4701,7 +4879,7 @@ if ("serviceWorker" in navigator) {
     }
 
     function renderRoomPanel(data){
-      renderPaper(data.paper); // shared note — same for everyone in the room
+      renderPaperThumbnail(data.paper); // shared drawing — same for everyone in the room
       const cap = ROOM_CAPACITY[roomId] || 4;
       const others = Object.keys(data.members||{}).filter(id=>id!==memberId && isFresh((data.members[id]||{}).ts));
       roomStatusDot.classList.toggle('online', others.length>0);
