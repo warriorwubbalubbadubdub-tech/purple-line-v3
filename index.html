@@ -1316,6 +1316,66 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
+  /* ---------- black paper (shared room color note) ---------- */
+  .pet-streak-row{
+    display:flex;
+    align-items:flex-end;
+    justify-content:center;
+    gap:10px;
+    position:relative;
+  }
+  .paper-note{
+    width:26px;
+    height:34px;
+    flex-shrink:0;
+    margin-bottom:6px;
+    border:none;
+    border-radius:2px;
+    background:#141014;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.06);
+    cursor:pointer;
+    padding:0;
+    transition:transform .15s ease, box-shadow .15s ease;
+  }
+  .paper-note:hover{ transform:translateY(-1px); box-shadow:0 4px 9px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.1); }
+  .paper-note:active{ transform:scale(0.94); }
+  .paper-drawer{
+    display:none;
+    position:absolute;
+    bottom:100%;
+    left:50%;
+    transform:translateX(-50%);
+    margin-bottom:8px;
+    padding:9px;
+    background:var(--app-surface);
+    border:1px solid rgba(147,51,234,0.25);
+    border-radius:10px;
+    box-shadow:0 10px 28px rgba(0,0,0,0.35);
+    z-index:5;
+    width:max-content;
+  }
+  .paper-drawer.open{ display:block; }
+  .paper-drawer-swatches{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .paper-swatch{
+    width:22px;
+    height:22px;
+    border-radius:50%;
+    border:1px solid rgba(0,0,0,0.15);
+    cursor:pointer;
+    padding:0;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,0.15);
+  }
+  .paper-swatch.selected{ box-shadow:0 0 0 2px var(--app-surface), 0 0 0 4px var(--purple-core); }
+  .paper-updated{
+    margin-top:6px;
+    padding-top:6px;
+    border-top:1px solid rgba(147,51,234,0.14);
+    font-size:9.5px;
+    color:var(--text-tertiary);
+    white-space:nowrap;
+    text-align:center;
+  }
+
   .room-member-row{ display:flex; align-items:center; gap:6px; padding:5px 0; border-top:1px solid rgba(147,51,234,0.12); font-size:11px; color:var(--text-secondary); }
   .room-member-row:first-child{ border-top:none; }
   .room-member-avatar{ width:18px; height:18px; border-radius:50%; flex-shrink:0; object-fit:cover; background:var(--purple-muted); }
@@ -1767,7 +1827,14 @@ if ("serviceWorker" in navigator) {
     <div class="room-status-body" id="roomStatusBody">
       <div id="roomMemberList"></div>
       <div class="pet-streak-box" id="petStreakBox">
-        <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
+        <div class="pet-streak-row">
+          <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
+          <button type="button" class="paper-note" id="paperNoteBtn" title="Room note" aria-label="Open room note"></button>
+          <div class="paper-drawer" id="paperDrawer">
+            <div class="paper-drawer-swatches" id="paperSwatches"></div>
+            <div class="paper-updated" id="paperUpdated"></div>
+          </div>
+        </div>
       </div>
       <button type="button" class="room-leave-btn" id="roomLeaveBtn">Leave Room</button>
     </div>
@@ -4214,8 +4281,14 @@ if ("serviceWorker" in navigator) {
   (function(){
     const FIREBASE_DB_URL = 'https://my-room-app-ea5a5-default-rtdb.firebaseio.com';
     const ROOM_CAPACITY = {'2009':2, '2011':4}; // room 2009 is a 2-person room, 2011 stays at 4
-    const HEARTBEAT_MS = 1000; // 1s — near real-time; Firebase's free tier easily handles this
-    const STALE_MS = 4000; // ~4 missed beats grace before someone is considered gone (avoids false "disconnected" on a single slow request)
+    const HEARTBEAT_MS = 2000; // 2s — still near real-time, half the Firebase request volume
+    const STALE_MS = 6000; // ~3 missed beats grace before someone is considered gone (avoids false "disconnected" on a single slow request)
+    function isFresh(ts){ return typeof ts==='number' && (Date.now()-ts) < STALE_MS; }
+    // Ghost entries: if a tab is closed/crashes without DELETE-ing its slot, its row
+    // stays in Firebase forever with a stale ts. Anywhere we COUNT or LIST who's in
+    // the room, we filter through isFresh() so a ghost never blocks capacity or
+    // shows up as "someone is here" — we just never delete their row, since another
+    // device racing to delete the same key is how the old flicker bug happened.
     const SESSION_KEY = 'purple-line-room-session'; // sessionStorage → gone once the app/tab is closed, so the code is asked again next time
     const PROFILE_KEY = 'purple-line-room-profile'; // localStorage → set once, edited only via the settings (⚙) button
     const PHOTO_SIZE = 96; // uploaded photos are downscaled to this square so they stay small enough to sync
@@ -4244,6 +4317,10 @@ if ("serviceWorker" in navigator) {
     const roomMemberList = document.getElementById('roomMemberList');
     const roomLeaveBtn = document.getElementById('roomLeaveBtn');
     const petStreakCat = document.getElementById('petStreakCat');
+    const paperNoteBtn = document.getElementById('paperNoteBtn');
+    const paperDrawer = document.getElementById('paperDrawer');
+    const paperSwatches = document.getElementById('paperSwatches');
+    const paperUpdated = document.getElementById('paperUpdated');
     if(!roomModeBtn) return;
 
     // ---- pet streak (blinking cat) animation ----
@@ -4272,7 +4349,7 @@ if ("serviceWorker" in navigator) {
     function startPetAnim(){
       if(!petStreakCat || petAnimTimer) return;
       petStreakCat.src = PET_FRAMES.open;
-      petAnimTimer = setInterval(petPlayBlink, 8000);
+      petAnimTimer = setInterval(petPlayBlink, 5000);
     }
     function stopPetAnim(){
       if(petAnimTimer){ clearInterval(petAnimTimer); petAnimTimer = null; }
@@ -4292,33 +4369,70 @@ if ("serviceWorker" in navigator) {
     let isHolding = false;
     let holdStartY = 0;
 
-    let audioCtx = null, purrOsc = null, purrGain = null, purrLFO = null, purrLFOGain = null;
+    // Layered "grrrr": a low sine for the chest rumble + a detuned sub-oscillator
+    // for body, plus a filtered-noise layer for the rasp/texture real purring has
+    // (a pure sine just sounds like a hum, not a growl). One shared LFO pulses
+    // all three together at purring rate so it stays one coherent sound.
+    let audioCtx = null, purrGain = null, purrLFO = null, purrLFOGain = null;
+    let purrOsc1 = null, purrOsc2 = null, purrNoise = null, purrNoiseFilter = null, purrNoiseGain = null;
+    function makeNoiseBuffer(ctx){
+      const len = ctx.sampleRate * 2;
+      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for(let i=0;i<len;i++) data[i] = Math.random()*2 - 1;
+      return buf;
+    }
     function purrStart(){
       try{
         if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         if(audioCtx.state === 'suspended') audioCtx.resume();
         if(purrGain) return; // already purring
-        purrOsc = audioCtx.createOscillator();
-        purrOsc.type = 'sine';
-        purrOsc.frequency.value = 28; // low rumble, like a cat's chest purr
+        const ctx = audioCtx;
 
-        purrGain = audioCtx.createGain();
+        purrGain = ctx.createGain();
         purrGain.gain.value = 0.0001;
+        purrGain.connect(ctx.destination);
 
-        purrLFO = audioCtx.createOscillator();     // makes the rumble pulse instead of a flat tone
+        // body: two low oscillators, slightly detuned against each other so
+        // they beat and sound organic instead of a flat electronic tone
+        purrOsc1 = ctx.createOscillator();
+        purrOsc1.type = 'sine';
+        purrOsc1.frequency.value = 27;
+        purrOsc2 = ctx.createOscillator();
+        purrOsc2.type = 'triangle';
+        purrOsc2.frequency.value = 33;
+        const bodyGain = ctx.createGain();
+        bodyGain.gain.value = 0.9;
+        purrOsc1.connect(bodyGain);
+        purrOsc2.connect(bodyGain);
+        bodyGain.connect(purrGain);
+
+        // rasp: filtered noise gives it the gravelly "grrrr" texture instead
+        // of a smooth hum
+        purrNoise = ctx.createBufferSource();
+        purrNoise.buffer = makeNoiseBuffer(ctx);
+        purrNoise.loop = true;
+        purrNoiseFilter = ctx.createBiquadFilter();
+        purrNoiseFilter.type = 'bandpass';
+        purrNoiseFilter.frequency.value = 90;
+        purrNoiseFilter.Q.value = 0.7;
+        purrNoiseGain = ctx.createGain();
+        purrNoiseGain.gain.value = 0.5;
+        purrNoise.connect(purrNoiseFilter);
+        purrNoiseFilter.connect(purrNoiseGain);
+        purrNoiseGain.connect(purrGain);
+
+        // shared LFO: pulses the whole rumble at purring rate (~24/sec)
+        purrLFO = ctx.createOscillator();
         purrLFO.type = 'sine';
-        purrLFO.frequency.value = 24;               // ~24 pulses/sec, typical purr rate
-        purrLFOGain = audioCtx.createGain();
+        purrLFO.frequency.value = 24;
+        purrLFOGain = ctx.createGain();
         purrLFOGain.gain.value = 0.035;
-
         purrLFO.connect(purrLFOGain);
         purrLFOGain.connect(purrGain.gain);
-        purrOsc.connect(purrGain);
-        purrGain.connect(audioCtx.destination);
 
-        purrOsc.start();
-        purrLFO.start();
-        purrGain.gain.linearRampToValueAtTime(0.045, audioCtx.currentTime + 0.18);
+        purrOsc1.start(); purrOsc2.start(); purrNoise.start(); purrLFO.start();
+        purrGain.gain.linearRampToValueAtTime(0.05, ctx.currentTime + 0.18);
       }catch(e){ /* Web Audio unavailable — fail silently, no sound is not critical */ }
     }
     function purrStop(){
@@ -4329,9 +4443,10 @@ if ("serviceWorker" in navigator) {
         purrGain.gain.setValueAtTime(purrGain.gain.value, now);
         purrGain.gain.linearRampToValueAtTime(0.0001, now + 0.12);
       }catch(e){}
-      const o = purrOsc, l = purrLFO;
-      setTimeout(()=>{ try{ o.stop(); }catch(e){} try{ l.stop(); }catch(e){} }, 160);
-      purrOsc = null; purrLFO = null; purrGain = null; purrLFOGain = null;
+      const nodes = [purrOsc1, purrOsc2, purrNoise, purrLFO];
+      setTimeout(()=>{ nodes.forEach(n=>{ try{ n.stop(); }catch(e){} }); }, 160);
+      purrOsc1 = null; purrOsc2 = null; purrNoise = null; purrNoiseFilter = null;
+      purrNoiseGain = null; purrLFO = null; purrGain = null; purrLFOGain = null;
     }
 
     function petResetStretch(){
@@ -4341,7 +4456,7 @@ if ("serviceWorker" in navigator) {
     }
     function petBeginHold(){
       isHolding = true;
-      stopPetAnim();                        // pause the automatic 8s blink while petting
+      stopPetAnim();                        // pause the automatic 5s blink while petting
       petStreakCat.src = PET_FRAMES.full;   // eyes close while held
       purrStart();
     }
@@ -4445,6 +4560,78 @@ if ("serviceWorker" in navigator) {
 
     function roomUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '.json'; }
     function memberUrl(id){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/members/' + (id||memberId) + '.json'; }
+    function paperUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/paper.json'; }
+
+    // ---- shared black paper (a room-wide color note anyone can change) ----
+    // Lives at /rooms/{roomId}/paper. It's a single shared key (not per-member,
+    // unlike presence), so whoever writes last wins and everyone in the room
+    // sees the same color — that's the whole point, it's a shared note, not a
+    // personal one.
+    const PAPER_COLORS = [
+      {key:'red',    hex:'#c0392b'},
+      {key:'white',  hex:'#f4f2f0'},
+      {key:'grey',   hex:'#8a8a8f'},
+      {key:'purple', hex:'#7c1fd1'},
+      {key:'gold',   hex:'#c9a341'},
+      {key:'black',  hex:'#141014'}
+    ];
+    let currentPaper = null; // {color, by, ts} last known state
+    function buildPaperSwatches(){
+      if(!paperSwatches) return;
+      paperSwatches.innerHTML = '';
+      PAPER_COLORS.forEach(c=>{
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'paper-swatch';
+        b.style.background = c.hex;
+        b.title = c.key;
+        b.addEventListener('click', ()=> pickPaperColor(c.key));
+        b.dataset.color = c.key;
+        paperSwatches.appendChild(b);
+      });
+    }
+    buildPaperSwatches();
+    function renderPaper(paper){
+      currentPaper = paper || null;
+      const color = (paper && paper.color) || 'black';
+      const found = PAPER_COLORS.find(c=>c.key===color) || PAPER_COLORS[5];
+      if(paperNoteBtn) paperNoteBtn.style.background = found.hex;
+      if(paperSwatches){
+        Array.from(paperSwatches.children).forEach(el=>{
+          el.classList.toggle('selected', el.dataset.color === color);
+        });
+      }
+      if(paperUpdated){
+        paperUpdated.textContent = (paper && paper.by) ? ('updated by ' + paper.by) : 'tap a color to update';
+      }
+    }
+    async function pickPaperColor(color){
+      paperDrawer.classList.remove('open');
+      if(!configured || !roomId) return;
+      const profile = loadProfile();
+      const paper = {color: color, by: profile.name || 'Someone', ts: Date.now()};
+      renderPaper(paper); // optimistic — show it instantly, everyone else picks it up on their next poll
+      try{
+        await fetch(paperUrl() + '?_pl=' + Date.now(), {
+          method:'PUT',
+          headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},
+          cache:'no-store',
+          body:JSON.stringify(paper)
+        });
+      }catch(e){ console.error('[Purple Line] Paper update failed:', e); }
+    }
+    renderPaper(null);
+    if(paperNoteBtn){
+      paperNoteBtn.addEventListener('click', e=>{
+        e.stopPropagation();
+        paperDrawer.classList.toggle('open');
+      });
+    }
+    document.addEventListener('click', e=>{
+      if(paperDrawer && paperDrawer.classList.contains('open') && !paperDrawer.contains(e.target) && e.target!==paperNoteBtn){
+        paperDrawer.classList.remove('open');
+      }
+    });
     async function fetchRoom(){
       if(!configured) return {members:{}};
 
@@ -4514,8 +4701,9 @@ if ("serviceWorker" in navigator) {
     }
 
     function renderRoomPanel(data){
+      renderPaper(data.paper); // shared note — same for everyone in the room
       const cap = ROOM_CAPACITY[roomId] || 4;
-      const others = Object.keys(data.members||{}).filter(id=>id!==memberId);
+      const others = Object.keys(data.members||{}).filter(id=>id!==memberId && isFresh((data.members[id]||{}).ts));
       roomStatusDot.classList.toggle('online', others.length>0);
       roomStatusTitle.textContent = 'Room ' + roomId + ' · ' + (others.length+1) + '/' + cap;
       roomMemberList.innerHTML = '';
@@ -4639,7 +4827,10 @@ if ("serviceWorker" in navigator) {
       roomId = code;
       const cap = ROOM_CAPACITY[roomId];
       const data = await fetchRoom();
-      const others = Object.keys(data.members||{});
+      // Only count members who've actually heartbeated recently — a stale/ghost
+      // row left behind by a crashed or force-closed tab must never block a
+      // real join, and must never make YOU look like a duplicate "new" person.
+      const others = Object.keys(data.members||{}).filter(id=>isFresh((data.members[id]||{}).ts));
       if(others.length >= cap){
         roomModalErr.textContent = 'That room is full (' + cap + '/' + cap + ').';
         roomId = null;
@@ -4702,6 +4893,39 @@ if ("serviceWorker" in navigator) {
       roomCodeInput.value = roomCodeInput.value.replace(/[^0-9]/g,'').slice(0,4);
     });
     roomLeaveBtn.addEventListener('click', leaveRoom);
+
+    // ---- restore an in-progress room session on reload ----
+    // Without this, every page refresh forgot roomId/memberId (they only ever
+    // lived in JS variables) even though a session was saved to sessionStorage.
+    // The result: reloading the tab silently generated a BRAND NEW memberId in
+    // joinRoom() next time you hit "Join", leaving your previous slot behind as
+    // a ghost — which is exactly the "counts me as a new one / can't join"
+    // symptom, since two of your own ghost rows can eat a small room's capacity.
+    // Restoring the same memberId here means a refresh re-attaches to the row
+    // you already had instead of minting another one.
+    function restoreRoomSession(){
+      let saved = null;
+      try{ saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); }catch(e){}
+      if(!saved || !saved.roomId || !saved.memberId) return;
+      roomId = saved.roomId;
+      memberId = saved.memberId;
+      showRoomBar();
+      startHeartbeat();
+    }
+    restoreRoomSession();
+
+    // ---- best-effort cleanup when the tab actually closes ----
+    // This can't be guaranteed to run (crashes, force-quit, killed background
+    // tabs never fire it) — that's WHY the isFresh()/STALE_MS filtering above
+    // exists as the real fix. This just makes the common "closed the tab
+    // normally" case clean up immediately instead of waiting out STALE_MS.
+    function leaveBeacon(){
+      if(!configured || !roomId || !memberId) return;
+      try{
+        fetch(memberUrl() + '?_pl=' + Date.now(), { method:'DELETE', keepalive:true });
+      }catch(e){}
+    }
+    window.addEventListener('pagehide', leaveBeacon);
   })();
 
   restoreTimerState();
