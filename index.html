@@ -1641,7 +1641,7 @@
 <meta name="apple-mobile-web-app-title" content="Purple Line">
 <script>
 if ("serviceWorker" in navigator) {
-  const PURPLE_LINE_SW_VERSION = "14";
+  const PURPLE_LINE_SW_VERSION = "15";
   let purpleLineReloading = false;
 
   const reloadAfterControllerChange = () => {
@@ -4286,27 +4286,22 @@ if ("serviceWorker" in navigator) {
     function roomUrl(){ return FIREBASE_DB_URL + '/rooms/' + roomId + '.json'; }
     function memberUrl(id){ return FIREBASE_DB_URL + '/rooms/' + roomId + '/members/' + (id||memberId) + '.json'; }
     async function fetchRoom(){
-      const r=await fetch(roomUrl(), {
+      if(!configured) return {members:{}};
+
+      const res = await fetch(roomUrl() + '?_pl=' + Date.now(), {
         cache:'no-store',
         headers:{'Cache-Control':'no-cache'}
       });
 
-      if(!r.ok){
-        throw new Error(`Room read failed: HTTP ${r.status}`);
+      if(!res.ok){
+        throw new Error(`Room read failed: HTTP ${res.status}`);
       }
 
-      const data=await r.json();
-      if(!data || typeof data !== 'object'){
-        return {members:{}};
-      }
+      const json = await res.json();
+      const data = (json && typeof json==='object') ? json : {members:{}};
+      if(!data.members || typeof data.members!=='object') data.members = {};
 
-      if(!data.members || typeof data.members !== 'object'){
-        data.members = {};
-      }
-
-      // Keep every member returned by Firebase intact.
-      // Do not delete members here based on the local clock; this was causing
-      // hosted pages to lose valid members before the Room UI could render them.
+      // Keep the complete Firebase snapshot. Do not delete members here.
       return data;
     }
 
@@ -4317,18 +4312,29 @@ if ("serviceWorker" in navigator) {
     // connected" flicker between devices.
     async function pushMyStatus(status){
       if(!configured || !roomId || !memberId) return;
-      try{
-        await fetch(memberUrl(), {
-          method: 'PUT',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(status)
-        });
-      }catch(e){}
-    }
 
+      const res = await fetch(memberUrl() + '?_pl=' + Date.now(), {
+        method:'PUT',
+        headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},
+        cache:'no-store',
+        body:JSON.stringify(status)
+      });
+
+      if(!res.ok){
+        throw new Error(`Room status update failed: HTTP ${res.status}`);
+      }
+    }
     async function removeMyStatus(){
       if(!configured || !roomId || !memberId) return;
-      try{ await fetch(memberUrl(), {method:'DELETE'}); }catch(e){}
+
+      try{
+        await fetch(memberUrl() + '?_pl=' + Date.now(), {
+          method:'DELETE',
+          cache:'no-store'
+        });
+      }catch(e){
+        console.error('[Purple Line] Room leave failed:', e);
+      }
     }
 
     function myStatus(){
@@ -4372,34 +4378,43 @@ if ("serviceWorker" in navigator) {
       }
     }
     async function heartbeat(){
-      if(!roomId) return;
+      if(!roomId || !memberId) return;
 
+      const activeRoom = roomId;
+      const activeMember = memberId;
       const mine = Object.assign({ts:Date.now()}, myStatus());
 
       try{
         await pushMyStatus(mine);
+
+        // Ignore a response if the user left/joined another room while the
+        // request was in flight.
+        if(roomId !== activeRoom || memberId !== activeMember) return;
+
         const data = await fetchRoom();
 
-        data.members = data.members || {};
-        data.members[memberId] = mine;
+        if(roomId !== activeRoom || memberId !== activeMember) return;
 
-        // Always render the complete Firebase member snapshot.
+        data.members = data.members || {};
+        data.members[activeMember] = mine;
         renderRoomPanel(data);
       }catch(e){
         console.error('[Purple Line] Room heartbeat failed:', e);
       }
 
-      if(roomId){
+      if(roomId === activeRoom && memberId === activeMember){
         heartbeatTimer = setTimeout(heartbeat, HEARTBEAT_MS);
       }
     }
-
     function startHeartbeat(){
       stopHeartbeat();
       heartbeat();
     }
     function stopHeartbeat(){
-      if(heartbeatTimer){ clearTimeout(heartbeatTimer); heartbeatTimer=null; }
+      if(heartbeatTimer){
+        clearTimeout(heartbeatTimer);
+        heartbeatTimer=null;
+      }
     }
 
     function showRoomBar(){
@@ -4522,18 +4537,6 @@ if ("serviceWorker" in navigator) {
       roomCodeInput.value = roomCodeInput.value.replace(/[^0-9]/g,'').slice(0,4);
     });
     roomLeaveBtn.addEventListener('click', leaveRoom);
-
-    /* Rejoin silently if this same tab/session already had a room open
-       (e.g. after a normal reload). Closing the app clears sessionStorage,
-       so the code prompt comes back next time the app is actually closed. */
-    try{
-      const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
-      if(saved && saved.roomId && saved.memberId && ROOM_CAPACITY.hasOwnProperty(saved.roomId)){
-        roomId = saved.roomId; memberId = saved.memberId;
-        showRoomBar();
-        startHeartbeat();
-      }
-    }catch(e){}
   })();
 
   restoreTimerState();
