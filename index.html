@@ -1447,6 +1447,7 @@
   }
   .draw-status{
     flex:1;
+    min-width:0;
     font-size:10.5px;
     color:#a297b1;
     white-space:nowrap;
@@ -1454,12 +1455,14 @@
     text-overflow:ellipsis;
   }
   .draw-clear-btn, .draw-save-btn{
-    padding:8px 14px;
+    padding:8px 11px;
     border:none;
     border-radius:10px;
-    font-size:12px;
+    font-size:11.5px;
     font-weight:600;
     cursor:pointer;
+    white-space:nowrap;
+    flex-shrink:0;
   }
   .draw-clear-btn{ background:rgba(255,255,255,0.1); color:#f2edf7; }
   .draw-clear-btn:hover{ background:rgba(255,255,255,0.18); }
@@ -1938,6 +1941,7 @@ if ("serviceWorker" in navigator) {
       </div>
       <div class="draw-foot">
         <div class="draw-status" id="drawStatus"></div>
+        <button type="button" class="draw-clear-btn" id="drawReverseBtn" title="Flip paper color">⇄ Reverse</button>
         <button type="button" class="draw-clear-btn" id="drawClearBtn">Clear</button>
         <button type="button" class="draw-save-btn" id="drawSaveBtn">Save</button>
       </div>
@@ -4674,11 +4678,12 @@ if ("serviceWorker" in navigator) {
       {key:'yellow', hex:'#f1c40f'},
       {key:'purple', hex:'#a855f7'},
       {key:'grey',   hex:'#9a9aa0'},
-      {key:'black',  hex:'#141014'}, // paper is always black, so this doubles as an eraser
-      {key:'white',  hex:'#f4f2f0'}
+      {key:'black',  hex:'#000000'}, // pure black — matches the black paper exactly, so it works as an eraser
+      {key:'white',  hex:'#ffffff'}  // pure white — matches the paper once it's reversed, so it erases there too
     ];
     let currentPaper = null;  // {image, by, ts} last known saved state
     let drawColor = 'white';
+    let paperBg = '#000000';  // current paper color — flip with Reverse
     let drawCtx = null;
     let isDrawingStroke = false;
     let lastPt = null;
@@ -4689,12 +4694,21 @@ if ("serviceWorker" in navigator) {
     const drawExitBtn = document.getElementById('drawExitBtn');
     const drawSaveBtn = document.getElementById('drawSaveBtn');
     const drawClearBtn = document.getElementById('drawClearBtn');
+    const drawReverseBtn = document.getElementById('drawReverseBtn');
     const drawStatus = document.getElementById('drawStatus');
 
-    function fillCanvasBlack(){
+    function fillCanvasBg(){
       if(!drawCtx) return;
-      drawCtx.fillStyle = '#000';
+      drawCtx.fillStyle = paperBg;
       drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+    }
+    function reversePaper(){
+      // Flips the paper to the opposite color and starts it fresh — a true
+      // pixel-by-pixel invert of existing strokes isn't what "reverse the
+      // paper to white" means here, it means: give me a white page instead.
+      paperBg = (paperBg === '#000000') ? '#ffffff' : '#000000';
+      fillCanvasBg();
+      drawStatus.textContent = (paperBg === '#ffffff') ? 'White paper — draw, then Save' : 'Black paper — draw, then Save';
     }
     function buildDrawColors(){
       if(!drawColorsEl) return;
@@ -4773,7 +4787,8 @@ if ("serviceWorker" in navigator) {
     function openDrawFullscreen(){
       if(!drawOverlay) return;
       if(!drawCtx) drawCtx = drawCanvas.getContext('2d');
-      fillCanvasBlack();
+      paperBg = '#000000'; // always opens as a black paper; use Reverse to flip it
+      fillCanvasBg();
       if(currentPaper && currentPaper.image){
         const img = new Image();
         img.onload = ()=>{ drawCtx.drawImage(img, 0, 0, drawCanvas.width, drawCanvas.height); };
@@ -4807,7 +4822,8 @@ if ("serviceWorker" in navigator) {
     }
     if(paperNoteBtn) paperNoteBtn.addEventListener('click', openDrawFullscreen);
     if(drawExitBtn) drawExitBtn.addEventListener('click', closeDrawFullscreen);
-    if(drawClearBtn) drawClearBtn.addEventListener('click', fillCanvasBlack);
+    if(drawClearBtn) drawClearBtn.addEventListener('click', fillCanvasBg);
+    if(drawReverseBtn) drawReverseBtn.addEventListener('click', reversePaper);
     if(drawSaveBtn) drawSaveBtn.addEventListener('click', saveDrawing);
     if(drawOverlay) drawOverlay.addEventListener('click', e=>{ if(e.target===drawOverlay) closeDrawFullscreen(); });
     async function fetchRoom(){
