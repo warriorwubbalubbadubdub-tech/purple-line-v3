@@ -4553,6 +4553,40 @@ if ("serviceWorker" in navigator) {
     let isHolding = false;
     let holdStartY = 0;
 
+    // ---- roll frames (drag left/right while holding) ----
+    // 3 image frames placed next to this HTML file (same folder), swapped
+    // based on how far left/right the cat has been dragged while held.
+    const ROLL_FRAMES = {
+      left:  'cat-roll-left.png',
+      mid:   'cat-roll-mid.png',
+      right: 'cat-roll-right.png'
+    };
+    Object.values(ROLL_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
+    const ROLL_THRESHOLD_PX = 18; // horizontal travel (px) needed to switch away from the middle frame
+    const ROLL_SOUND_SRC = 'cat-roll-purr.wav';
+
+    let holdStartX = 0;
+    let isRolling = false;      // true once horizontal dragging has started this hold
+    let rollAudioEl = null;
+
+    function ensureRollAudio(){
+      if(!rollAudioEl){
+        rollAudioEl = new Audio(ROLL_SOUND_SRC);
+        rollAudioEl.loop = true;
+      }
+      return rollAudioEl;
+    }
+    function rollSoundStart(){
+      const a = ensureRollAudio();
+      try{ a.currentTime = 0; }catch(e){}
+      const p = a.play();
+      if(p && p.catch) p.catch(()=>{ /* blocked until a user gesture unlocks audio; hold gesture itself usually suffices */ });
+    }
+    function rollSoundStop(){
+      if(!rollAudioEl) return;
+      try{ rollAudioEl.pause(); rollAudioEl.currentTime = 0; }catch(e){}
+    }
+
     // Layered "grrrr": a low sine for the chest rumble + a detuned sub-oscillator
     // for body, plus a filtered-noise layer for the rasp/texture real purring has
     // (a pure sine just sounds like a hum, not a growl). One shared LFO pulses
@@ -4822,6 +4856,8 @@ if ("serviceWorker" in navigator) {
       petResetStretch();
       petStreakCat.src = PET_FRAMES.open;
       purrStop();
+      isRolling = false;
+      rollSoundStop();
       if(roomStatusBar.classList.contains('expanded')) startPetAnim();
     }
     function petHandleRelease(){
@@ -4833,6 +4869,8 @@ if ("serviceWorker" in navigator) {
       petStreakCat.addEventListener('pointerdown', e=>{
         e.preventDefault();
         holdStartY = e.clientY;
+        holdStartX = e.clientX;
+        isRolling = false;
         clearTimeout(holdTimer);
         try{ petStreakCat.setPointerCapture(e.pointerId); }catch(err){}
         // Unholdable while hiding behind its tail (shield mode): don't even
@@ -4851,6 +4889,21 @@ if ("serviceWorker" in navigator) {
         const dy = e.clientY - holdStartY; // negative = finger moved up
         const scale = 1 + Math.max(-STRETCH_MAX, Math.min(STRETCH_MAX, -dy / STRETCH_RANGE_PX));
         petStreakCat.style.transform = 'scaleY(' + scale + ')';
+
+        // left/right roll: swap between the 3 roll frames based on horizontal
+        // drag distance, and loop the rolling purr sound while it's moving
+        const dx = e.clientX - holdStartX;
+        if(!isRolling){
+          isRolling = true;
+          rollSoundStart();
+        }
+        if(dx <= -ROLL_THRESHOLD_PX){
+          petStreakCat.src = ROLL_FRAMES.left;
+        } else if(dx >= ROLL_THRESHOLD_PX){
+          petStreakCat.src = ROLL_FRAMES.right;
+        } else {
+          petStreakCat.src = ROLL_FRAMES.mid;
+        }
       });
       petStreakCat.addEventListener('pointerup', petHandleRelease);
       petStreakCat.addEventListener('pointercancel', petHandleRelease);
