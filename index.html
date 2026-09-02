@@ -1348,10 +1348,10 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
-  /* cat-roll-mid only: +15% width and +20% length from its current size */
+  /* cat-roll-mid only: enlarge the photo itself without changing its layout box,
+     so the room list and surrounding elements keep exactly the same size */
   .pet-cat.roll-mid{
-    width:88.55px;
-    height:102px;
+    transform:scaleX(1.20) scaleY(1.25);
   }
 
   /* wrapper so the anger symbol can sit positioned on top of the cat */
@@ -4577,13 +4577,19 @@ if ("serviceWorker" in navigator) {
       right: 'cat-roll-left.png'
     };
     Object.values(ROLL_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
-    // Keep the larger dimensions limited to the middle roll frame only.
-    if(petStreakCat){
-      const rollMidObserver = new MutationObserver(()=>{
-        petStreakCat.classList.toggle('roll-mid', petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) || petStreakCat.src.endsWith(ROLL_FRAMES.mid));
-      });
-      rollMidObserver.observe(petStreakCat, { attributes:true, attributeFilter:['src'] });
+
+    // Keep the larger visual scale limited to cat-roll-mid only.
+    // transform changes the photo's appearance, not the element's layout size.
+    function updateRollMidClass(){
+      if(!petStreakCat) return;
+      const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
+                    petStreakCat.src.endsWith(ROLL_FRAMES.mid);
+      petStreakCat.classList.toggle('roll-mid', isMid);
     }
+    const rollMidObserver = new MutationObserver(updateRollMidClass);
+    rollMidObserver.observe(petStreakCat, { attributes:true, attributeFilter:['src'] });
+    updateRollMidClass();
+
     const ROLL_THRESHOLD_PX = 18; // horizontal travel (px) needed to switch away from the middle frame
     const ROLL_SOUND_SRC = 'cat-roll-purr.mp3';
 
