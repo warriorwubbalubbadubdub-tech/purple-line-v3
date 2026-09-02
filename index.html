@@ -1348,23 +1348,16 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
-  /* cat-roll-mid only:
-     make the actual image box 20% wider and 25% taller,
-     while keeping the wrapper/layout at the original 77x85 size.
-     This prevents the room list from becoming larger. */
+  /* cat-roll-mid only: enlarge the photo itself without changing its layout box,
+     so the room list and surrounding elements keep exactly the same size */
+  .pet-cat.roll-mid{
+    transform:scaleX(1.20) scaleY(1.25);
+  }
+
+  /* wrapper so the anger symbol can sit positioned on top of the cat */
   .pet-cat-wrap{
     position:relative;
     display:inline-block;
-    width:77px;
-    height:85px;
-  }
-  .pet-cat.roll-mid{
-    position:absolute;
-    width:92.4px;
-    height:106.25px;
-    left:50%;
-    top:50%;
-    transform:translate(-50%, -50%);
   }
   .pet-anger-symbol{
     position:absolute;
@@ -4584,6 +4577,19 @@ if ("serviceWorker" in navigator) {
       right: 'cat-roll-left.png'
     };
     Object.values(ROLL_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
+
+    // Keep the larger visual scale limited to cat-roll-mid only.
+    // transform changes the photo's appearance, not the element's layout size.
+    function updateRollMidClass(){
+      if(!petStreakCat) return;
+      const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
+                    petStreakCat.src.endsWith(ROLL_FRAMES.mid);
+      petStreakCat.classList.toggle('roll-mid', isMid);
+    }
+    const rollMidObserver = new MutationObserver(updateRollMidClass);
+    rollMidObserver.observe(petStreakCat, { attributes:true, attributeFilter:['src'] });
+    updateRollMidClass();
+
     const ROLL_THRESHOLD_PX = 18; // horizontal travel (px) needed to switch away from the middle frame
     const ROLL_SOUND_SRC = 'cat-roll-purr.mp3';
 
@@ -4909,7 +4915,6 @@ if ("serviceWorker" in navigator) {
       angerLevel = 0;
       if(petAngerSymbol) petAngerSymbol.style.opacity = 0;
       petStreakCat.src = ROLL_FRAMES.mid;   // eyes close while held (the roll art is all closed-eyes)
-      petStreakCat.classList.add('roll-mid');
       purrStart();
     }
     function petEndHold(){
@@ -4962,13 +4967,10 @@ if ("serviceWorker" in navigator) {
         }
         if(dx <= -ROLL_THRESHOLD_PX){
           petStreakCat.src = ROLL_FRAMES.left;
-          petStreakCat.classList.remove('roll-mid');
         } else if(dx >= ROLL_THRESHOLD_PX){
           petStreakCat.src = ROLL_FRAMES.right;
-          petStreakCat.classList.remove('roll-mid');
         } else {
           petStreakCat.src = ROLL_FRAMES.mid;
-          petStreakCat.classList.add('roll-mid');
         }
       });
       petStreakCat.addEventListener('pointerup', petHandleRelease);
