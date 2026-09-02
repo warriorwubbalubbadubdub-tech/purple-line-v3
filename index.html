@@ -1333,8 +1333,11 @@
     border-top:1px solid rgba(147,51,234,0.12);
   }
   .pet-cat{
-    width:64px;      /* <- adjust this to resize the pet, height follows automatically */
-    height:auto;
+    width:77px;       /* base 64px + 20% */
+    height:85px;       /* width * 1.1 -> the extra 10% added on top, for length */
+    object-fit:contain; /* keeps every frame the same on-screen size even though the
+                            left/mid/right source images aren't all the same aspect ratio */
+    object-position:50% 50%;
     display:block;
     image-rendering:auto;
     -webkit-user-drag:none;
@@ -4556,14 +4559,20 @@ if ("serviceWorker" in navigator) {
     // ---- roll frames (drag left/right while holding) ----
     // 3 image frames placed next to this HTML file (same folder), swapped
     // based on how far left/right the cat has been dragged while held.
+    // NOTE: left/right are intentionally cross-assigned to the "-left.png" /
+    // "-right.png" files below — the source art in cat-roll-left.png is the
+    // pose that actually reads as leaning/rolling toward the right, and
+    // cat-roll-right.png reads as leaning left. Swapping the assignment here
+    // (instead of renaming the files) makes a drag-right gesture show the
+    // right-leaning pose and a drag-left gesture show the left-leaning pose.
     const ROLL_FRAMES = {
-      left:  'cat-roll-left.png',
+      left:  'cat-roll-right.png',
       mid:   'cat-roll-mid.png',
-      right: 'cat-roll-right.png'
+      right: 'cat-roll-left.png'
     };
     Object.values(ROLL_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
     const ROLL_THRESHOLD_PX = 18; // horizontal travel (px) needed to switch away from the middle frame
-    const ROLL_SOUND_SRC = 'cat-roll-purr.wav';
+    const ROLL_SOUND_SRC = 'cat-roll-purr.mp3';
 
     let holdStartX = 0;
     let isRolling = false;      // true once horizontal dragging has started this hold
@@ -4573,11 +4582,40 @@ if ("serviceWorker" in navigator) {
       if(!rollAudioEl){
         rollAudioEl = new Audio(ROLL_SOUND_SRC);
         rollAudioEl.loop = true;
+        rollAudioEl.preload = 'auto';
       }
       return rollAudioEl;
     }
+    // Mobile browsers (Safari especially) only allow audio to start if the
+    // play() call happens synchronously inside a real user-gesture event
+    // handler. petBeginHold() (where rollSoundStart used to first get called
+    // from) runs off a setTimeout, which is already one tick removed from the
+    // gesture — by then it's too late and play() gets silently blocked. So we
+    // "unlock" both audio sources here, synchronously, straight out of
+    // pointerdown, before any timer runs.
+    let audioUnlocked = false;
+    function unlockAudio(){
+      if(audioUnlocked) return;
+      audioUnlocked = true;
+      try{
+        if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if(audioCtx.state === 'suspended') audioCtx.resume();
+      }catch(e){}
+      try{
+        const a = ensureRollAudio();
+        a.muted = true;
+        const p = a.play();
+        if(p && p.then){
+          p.then(()=>{ a.pause(); a.currentTime = 0; a.muted = false; })
+           .catch(()=>{ a.muted = false; });
+        } else {
+          a.pause(); a.currentTime = 0; a.muted = false;
+        }
+      }catch(e){}
+    }
     function rollSoundStart(){
       const a = ensureRollAudio();
+      a.muted = false;
       try{ a.currentTime = 0; }catch(e){}
       const p = a.play();
       if(p && p.catch) p.catch(()=>{ /* blocked until a user gesture unlocks audio; hold gesture itself usually suffices */ });
@@ -4680,6 +4718,7 @@ if ("serviceWorker" in navigator) {
       tail:  'cat-tail-hide.png'
     };
     const ANGER_SYMBOL_SRC = 'anger-symbol.png';
+    const TAIL_DEFEND_SOUND_SRC = 'cat-tail-defend.mp3'; // plays once (no loop) the moment the cat hides behind its tail
     [ANGRY_FRAMES.angry, ANGRY_FRAMES.tail, ANGER_SYMBOL_SRC].forEach(src=>{ const im = new Image(); im.src = src; });
 
     const petAngerSymbol   = document.getElementById('petAngerSymbol');
@@ -4779,10 +4818,19 @@ if ("serviceWorker" in navigator) {
       angerBumpCat._t = setTimeout(()=>{ if(!isHolding) petStreakCat.style.transform = 'scale(1)'; }, 150);
     }
 
+    function playTailDefendSound(){
+      try{
+        const a = new Audio(TAIL_DEFEND_SOUND_SRC);
+        a.loop = false;
+        const p = a.play();
+        if(p && p.catch) p.catch(()=>{ /* blocked until a user gesture unlocks audio */ });
+      }catch(e){}
+    }
     function angerEnterTail(){
       angerPhase = 'tail';
       stopPetAnim();
       petStreakCat.src = ANGRY_FRAMES.tail;
+      playTailDefendSound();
       if(petAngerSymbol) petAngerSymbol.style.opacity = 0;
       clearTimeout(angerTailTimer);
       angerTailTimer = setTimeout(angerExitTail, ANGER_TAIL_MS);
@@ -4847,7 +4895,7 @@ if ("serviceWorker" in navigator) {
       angerPhase = 'normal';
       angerLevel = 0;
       if(petAngerSymbol) petAngerSymbol.style.opacity = 0;
-      petStreakCat.src = PET_FRAMES.full;   // eyes close while held
+      petStreakCat.src = ROLL_FRAMES.mid;   // eyes close while held (the roll art is all closed-eyes)
       purrStart();
     }
     function petEndHold(){
@@ -4868,6 +4916,7 @@ if ("serviceWorker" in navigator) {
     if(petStreakCat){
       petStreakCat.addEventListener('pointerdown', e=>{
         e.preventDefault();
+        unlockAudio();   // must happen synchronously in the gesture, before any timers
         holdStartY = e.clientY;
         holdStartX = e.clientX;
         isRolling = false;
