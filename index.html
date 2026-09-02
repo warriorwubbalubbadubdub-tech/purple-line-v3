@@ -1336,13 +1336,14 @@
   }
   .pet-anger-symbol{
     position:absolute;
-    top:2%;
+    top:0%;
     left:50%;
-    width:32%;
+    width:40%;
     pointer-events:none;
     opacity:0;
     transform:translateX(-50%) scale(0.4);
     filter:drop-shadow(0 0 6px rgba(220,20,20,0.35));
+    z-index:10;
   }
 
   /* ---------- black paper (shared room drawing) ---------- */
@@ -4631,9 +4632,10 @@ if ("serviceWorker" in navigator) {
     [ANGRY_FRAMES.angry, ANGRY_FRAMES.tail, ANGER_SYMBOL_SRC].forEach(src=>{ const im = new Image(); im.src = src; });
 
     const petAngerSymbol   = document.getElementById('petAngerSymbol');
-    const ANGER_TRIGGER    = 5;     // taps before it snaps straight to hiding (no need to stop tapping)
-    const MAX_ANGER        = 8;     // taps for the pulse/sound to reach full intensity
-    const ANGER_IDLE_MS    = 650;   // pause after a tap that also counts as "stopped tapping"
+    const ANGER_PHASE1     = 3;     // taps before the angry look + symbol start appearing
+    const ANGER_PHASE2     = 8;     // taps before the symbol grows bigger   (3 + 5)
+    const ANGER_TAIL_TRIGGER = 23;  // taps before it snaps straight to hiding (3 + 5 + 15)
+    const ANGER_IDLE_MS    = 650;   // pause after a tap that also counts as "stopped tapping" (only once phase 1 has started)
     const ANGER_TAIL_MS    = 15000; // how long the tail-hiding photo stays up
     const ANGER_BUMP_SCALE = 1.10;  // +10% size per tap, springs back after
 
@@ -4655,8 +4657,9 @@ if ("serviceWorker" in navigator) {
     }
 
     // Normal taps: a soft, percussive "tap" (filtered noise, not a tone) that
-    // gets a touch brighter/sharper with anger. Taps landed while the tail is
-    // already hiding the face: the harsher growl-ish tone (kept as-is).
+    // gets a touch brighter/sharper with anger, maxing out by phase 2. Taps
+    // landed while the tail is already hiding the face: the harsher
+    // growl-ish tone (kept as-is).
     function playAngryClick(level, tailMode){
       if(!angerAudioCtx) return;
       const now = angerAudioCtx.currentTime;
@@ -4677,7 +4680,7 @@ if ("serviceWorker" in navigator) {
         osc.start(now); osc.stop(now + 0.24);
       } else {
         if(!angerNoiseBuf) angerNoiseBuf = makeNoiseBuffer(angerAudioCtx);
-        const t     = Math.min(level / MAX_ANGER, 1);
+        const t     = Math.min(level / ANGER_PHASE2, 1);
         const noise = angerAudioCtx.createBufferSource();
         noise.buffer = angerNoiseBuf;
         const filt = angerAudioCtx.createBiquadFilter();
@@ -4693,20 +4696,25 @@ if ("serviceWorker" in navigator) {
       }
     }
 
-    // Pulses the red symbol bigger/smaller under the ears; speed and
-    // amplitude both climb with angerLevel so it visibly escalates.
+    // Pulses the red symbol bigger/smaller under the ears. It only appears
+    // once phase 1 is reached, jumps to a visibly bigger base size once
+    // phase 2 is reached, and keeps climbing in intensity toward the tail
+    // threshold.
     function angerPulseLoop(){
       if(!petAngerSymbol) return;
-      if(angerPhase !== 'normal' || angerLevel <= 0){
+      if(angerPhase !== 'normal' || angerLevel < ANGER_PHASE1){
         petAngerSymbol.style.opacity = 0;
         angerPulseRAF = null;
         return;
       }
-      angerPulseT += 0.001 * (10 + angerLevel*6);
-      const amt   = angerLevel / MAX_ANGER;
-      const wave  = (Math.sin(angerPulseT) + 1) / 2;
-      const scale = 0.55 + amt*0.55 + wave * (0.15 + amt*0.35);
-      petAngerSymbol.style.opacity = Math.min(0.25 + amt*0.85, 1);
+      angerPulseT += 0.001 * (10 + angerLevel*4);
+      const amt      = Math.min(angerLevel / ANGER_TAIL_TRIGGER, 1);
+      const wave     = (Math.sin(angerPulseT) + 1) / 2;
+      const bigPhase = angerLevel >= ANGER_PHASE2;
+      const baseScale = bigPhase ? 0.95 : 0.5;
+      const waveRange = bigPhase ? 0.55 : 0.3;
+      const scale = baseScale + amt*0.5 + wave * waveRange;
+      petAngerSymbol.style.opacity = Math.min(0.35 + amt*0.75, 1);
       petAngerSymbol.style.transform = 'translateX(-50%) scale(' + scale.toFixed(3) + ')';
       angerPulseRAF = requestAnimationFrame(angerPulseLoop);
     }
@@ -4736,6 +4744,9 @@ if ("serviceWorker" in navigator) {
     }
 
     // Called on a plain tap (not a hold) — see petHandleRelease below.
+    // Escalation: taps 1-2 look like a normal pet (just the soft tap sound).
+    // At tap 3 the angry look + symbol kick in. At tap 8 the symbol jumps
+    // bigger. At tap 23 it snaps straight into hiding behind its tail.
     function handleAngryTap(){
       ensureAngerAudio();
       angerBumpCat();
@@ -4749,23 +4760,25 @@ if ("serviceWorker" in navigator) {
         return;
       }
 
-      angerLevel = Math.min(MAX_ANGER, angerLevel + 1);
-      petStreakCat.src = ANGRY_FRAMES.angry;
+      angerLevel += 1;
       playAngryClick(angerLevel, false);
-      angerStartPulse();
 
-      // reached the trigger count -> snap straight into hiding, no need
-      // to wait for the taps to stop
-      if(angerLevel >= ANGER_TRIGGER){
+      if(angerLevel >= ANGER_PHASE1){
+        petStreakCat.src = ANGRY_FRAMES.angry;
+        angerStartPulse();
+      }
+
+      if(angerLevel >= ANGER_TAIL_TRIGGER){
         clearTimeout(angerIdleTimer);
         angerEnterTail();
         return;
       }
 
-      // otherwise it still hides automatically once tapping pauses
+      // otherwise it still hides automatically once tapping pauses —
+      // but only once the angry look has actually started (phase 1+)
       clearTimeout(angerIdleTimer);
       angerIdleTimer = setTimeout(()=>{
-        if(angerPhase === 'normal' && angerLevel > 0) angerEnterTail();
+        if(angerPhase === 'normal' && angerLevel >= ANGER_PHASE1) angerEnterTail();
       }, ANGER_IDLE_MS);
     }
 
