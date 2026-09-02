@@ -1309,7 +1309,7 @@
      many pixels the bar (and, worse, its expanded body/cat panel) took up.
      Taking it out of flow via position:absolute fixes this at the root:
      canvas-wrap's size is now completely independent of the room bar. */
-  .room-status-bar{ display:none; position:absolute; top:100%; left:0; z-index:2000; width:fit-content; max-width:190px; margin:6px clamp(14px,5vw,24px) 0; border:1px solid rgba(147,51,234,0.25); border-radius:10px; background:var(--app-surface); box-shadow:0 12px 28px rgba(0,0,0,0.35); overflow:hidden; }
+  .room-status-bar{ display:none; position:absolute; top:100%; left:0; z-index:5; width:fit-content; max-width:190px; margin:6px clamp(14px,5vw,24px) 0; border:1px solid rgba(147,51,234,0.25); border-radius:10px; background:rgba(147,51,234,0.06); overflow:hidden; }
   .room-status-bar.visible{ display:block; }
   .room-status-head{ display:flex; align-items:center; gap:6px; padding:5px 9px; cursor:pointer; }
   .room-status-dot{ width:7px; height:7px; border-radius:50%; background:var(--text-tertiary); flex-shrink:0; }
@@ -1350,55 +1350,15 @@
     position:relative;
     display:inline-block;
   }
-  .pet-cat-wrap .pet-cat{ position:relative; z-index:1; }
-  /* ears-down overlay: sits exactly on top of the base cat image and is
-     faded in/out with opacity, which is what sells the "ears slowly fold
-     down" look during the left/right ear-cycle animation. */
-  .pet-ear-overlay{
-    position:absolute;
-    inset:0;
-    width:100%;
-    height:100%;
-    z-index:1;
-    pointer-events:none;
-    opacity:0;
-    transition:opacity .3s ease;
-  }
   .pet-anger-symbol{
     position:absolute;
     top:0%;
     left:50%;
     width:40%;
-    z-index:2;
     pointer-events:none;
     opacity:0;
     transform:translateX(-50%) scale(0.4);
     filter:drop-shadow(0 0 6px rgba(220,20,20,0.35));
-  }
-  .pet-meow-text{
-    position:absolute;
-    top:-6%;
-    left:50%;
-    z-index:3;
-    transform:translate(-50%, 0);
-    font-family:'Space Grotesk', sans-serif;
-    font-weight:700;
-    font-size:13px;
-    letter-spacing:0.02em;
-    color:#a855f7;
-    text-shadow:0 1px 3px rgba(0,0,0,0.15);
-    pointer-events:none;
-    opacity:0;
-    white-space:nowrap;
-  }
-  .pet-meow-text.show{
-    animation:petMeowFloat 2.2s ease forwards;
-  }
-  @keyframes petMeowFloat{
-    0%   { opacity:0; transform:translate(-50%, 6px) scale(0.85); }
-    18%  { opacity:1; transform:translate(-50%, -2px) scale(1); }
-    70%  { opacity:1; transform:translate(-50%, -10px) scale(1); }
-    100% { opacity:0; transform:translate(-50%, -20px) scale(0.95); }
   }
 
   /* ---------- black paper (shared room drawing) ---------- */
@@ -1411,12 +1371,12 @@
   }
   /* closed black book, shown before any drawing has been saved */
   .paper-note{
-    width:52px;
-    height:68px;
+    width:26px;
+    height:34px;
     flex-shrink:0;
     margin-bottom:6px;
     border:none;
-    border-radius:4px 10px 10px 4px;
+    border-radius:2px 6px 6px 2px;
     background:#141014 no-repeat center/cover;
     box-shadow:0 2px 6px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.06);
     cursor:pointer;
@@ -1427,18 +1387,18 @@
   .paper-note::before{ /* spine */
     content:'';
     position:absolute;
-    left:5px; top:4px; bottom:4px;
-    width:3px;
+    left:3px; top:2px; bottom:2px;
+    width:2px;
     background:rgba(255,255,255,0.16);
     border-radius:1px;
   }
   .paper-note::after{ /* page edges */
     content:'';
     position:absolute;
-    right:4px; top:5px; bottom:5px;
-    width:3px;
+    right:2px; top:3px; bottom:3px;
+    width:2px;
     background:rgba(255,255,255,0.1);
-    border-radius:0 3px 3px 0;
+    border-radius:0 2px 2px 0;
   }
   .paper-note.has-drawing::before,
   .paper-note.has-drawing::after{ display:none; }
@@ -2018,9 +1978,7 @@ if ("serviceWorker" in navigator) {
           <div class="pet-streak-row">
             <div class="pet-cat-wrap">
               <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
-              <img class="pet-cat pet-ear-overlay" id="petEarDown" src="cat-ear-down.png" alt="">
               <img class="pet-anger-symbol" id="petAngerSymbol" src="anger-symbol.png" alt="">
-              <span class="pet-meow-text" id="petMeowText">Meow</span>
             </div>
             <button type="button" class="paper-note" id="paperNoteBtn" title="Room drawing" aria-label="Open room drawing"></button>
           </div>
@@ -4564,17 +4522,6 @@ if ("serviceWorker" in navigator) {
     // preload so the swap is instant with no flicker/flash of a blank image
     Object.values(PET_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
 
-    // ---- ear-down frames (hold + drag left/right) ----
-    // Two more image files placed next to this HTML:
-    //   cat-ear-up.png   -> ears up (shown as soon as the left/right drag starts)
-    //   cat-ear-down.png -> ears folded down (crossfaded on top of the ear-up
-    //                       photo — the CSS opacity transition on #petEarDown
-    //                       is what makes the ear look like it eases down
-    //                       instead of snapping)
-    const EAR_FRAMES = { up: 'cat-ear-up.png', down: 'cat-ear-down.png' };
-    Object.values(EAR_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
-    const petEarDown = document.getElementById('petEarDown');
-
     let petAnimTimer = null;
     function petPlayBlink(){
       if(!petStreakCat) return;
@@ -4587,73 +4534,9 @@ if ("serviceWorker" in navigator) {
       if(!petStreakCat || petAnimTimer) return;
       petStreakCat.src = PET_FRAMES.open;
       petAnimTimer = setInterval(petPlayBlink, 5000);
-      startMeowLoop();
     }
     function stopPetAnim(){
       if(petAnimTimer){ clearInterval(petAnimTimer); petAnimTimer = null; }
-      stopMeowLoop();
-    }
-
-    // ---- random meow (image + text + sound) ----
-    // One more image file next to this HTML, same folder as the others:
-    //   cat-meow.png -> open-mouth meow photo, shown briefly during the effect
-    const MEOW_FRAME = 'cat-meow.png';
-    (function(){ const im = new Image(); im.src = MEOW_FRAME; })();
-
-    const petMeowText   = document.getElementById('petMeowText');
-    const MEOW_INTERVAL_MS = 30000; // check every 30s
-    const MEOW_CHANCE      = 0.5;   // 50/50 chance each time
-    const MEOW_HOLD_MS     = 900;   // how long the meow photo stays up
-
-    let meowLoopTimer = null;
-
-    // little rising-then-falling "meow" blip, reuses the same audio context
-    // as the click sounds below (created lazily on first tap)
-    function playMeowSound(){
-      if(!angerAudioCtx) return;
-      const now  = angerAudioCtx.currentTime;
-      const osc  = angerAudioCtx.createOscillator();
-      const gain = angerAudioCtx.createGain();
-      const filt = angerAudioCtx.createBiquadFilter();
-      osc.type = 'triangle';
-      filt.type = 'lowpass';
-      filt.frequency.value = 2200;
-      osc.frequency.setValueAtTime(520, now);
-      osc.frequency.linearRampToValueAtTime(760, now + 0.09);
-      osc.frequency.linearRampToValueAtTime(430, now + 0.30);
-      osc.frequency.linearRampToValueAtTime(360, now + 0.42);
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.linearRampToValueAtTime(0.22, now + 0.05);
-      gain.gain.linearRampToValueAtTime(0.16, now + 0.24);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.44);
-      osc.connect(filt); filt.connect(gain); gain.connect(angerAudioCtx.destination);
-      osc.start(now); osc.stop(now + 0.46);
-    }
-
-    function triggerMeow(){
-      // don't clash with holding/petting or the angry-cat escalation
-      if(!petStreakCat || isHolding || angerPhase !== 'normal' || angerLevel > 0) return;
-      ensureAngerAudio();
-      playMeowSound();
-      petStreakCat.src = MEOW_FRAME;
-      setTimeout(()=>{
-        if(!isHolding && angerPhase === 'normal' && angerLevel === 0) petStreakCat.src = PET_FRAMES.open;
-      }, MEOW_HOLD_MS);
-      if(petMeowText){
-        petMeowText.classList.remove('show');
-        void petMeowText.offsetWidth; // restart the fade animation
-        petMeowText.classList.add('show');
-      }
-    }
-    function meowTick(){
-      if(Math.random() < MEOW_CHANCE) triggerMeow();
-    }
-    function startMeowLoop(){
-      if(meowLoopTimer) return;
-      meowLoopTimer = setInterval(meowTick, MEOW_INTERVAL_MS);
-    }
-    function stopMeowLoop(){
-      if(meowLoopTimer){ clearInterval(meowLoopTimer); meowLoopTimer = null; }
     }
 
     // ---- interactive petting ----
@@ -4916,102 +4799,10 @@ if ("serviceWorker" in navigator) {
       }, ANGER_IDLE_MS);
     }
 
-    // ---- ear cycle: triggered by holding + dragging left/right ----
-    // While it's running: ears up for 2s, then a 0.3s crossfade down to the
-    // folded-ear photo, holds there, then eases back up — repeating for as
-    // long as the horizontal drag keeps happening. Stops (and the horizontal
-    // idle timeout below also stops it) the moment the drag pauses or the
-    // hold ends.
-    const EAR_HOLD_MS = 2000; // time spent in each state before flipping
-    const EAR_DRAG_IDLE_MS = 400; // stop the cycle if no L/R motion for this long
-    let earMode = false;
-    let earDown = false;
-    let earCycleTimer = null;
-    let earIdleTimer = null;
-    let holdStartX = 0, lastMoveX = 0, lastMoveY = 0;
-    let petWidthScale = 1;
-    let widthDragAccumulator = 0;
-
-    // Soft, low "content" trill — quieter and gentler than the purr rumble,
-    // layered on top of it right as the ears finish folding down each cycle.
-    function playComfySound(){
-      if(!audioCtx) return;
-      try{
-        const ctx = audioCtx;
-        const now = ctx.currentTime;
-        const osc = ctx.createOscillator();
-        const vibrato = ctx.createOscillator();
-        const vibratoGain = ctx.createGain();
-        const filt = ctx.createBiquadFilter();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        filt.type = 'lowpass';
-        filt.frequency.value = 1100;
-        osc.frequency.setValueAtTime(210, now);
-        osc.frequency.linearRampToValueAtTime(255, now + 0.18);
-        osc.frequency.linearRampToValueAtTime(225, now + 0.42);
-        vibrato.type = 'sine';
-        vibrato.frequency.value = 7;
-        vibratoGain.gain.value = 6;
-        vibrato.connect(vibratoGain);
-        vibratoGain.connect(osc.frequency);
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.linearRampToValueAtTime(0.09, now + 0.06);
-        gain.gain.linearRampToValueAtTime(0.07, now + 0.3);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.48);
-        osc.connect(filt); filt.connect(gain); gain.connect(ctx.destination);
-        osc.start(now); vibrato.start(now);
-        osc.stop(now + 0.5); vibrato.stop(now + 0.5);
-      }catch(e){ /* Web Audio unavailable — fail silently */ }
-    }
-
-    function earCycleTick(){
-      if(!earMode) return;
-      earDown = !earDown;
-      petStreakCat.src = earDown ? EAR_FRAMES.down : EAR_FRAMES.up;
-      if(petEarDown) petEarDown.style.opacity = '0';
-      if(earDown) playComfySound();
-      earCycleTimer = setTimeout(earCycleTick, EAR_HOLD_MS);
-    }
-    function startEarMode(){
-      if(earMode) return;
-      earMode = true;
-      earDown = false;
-      petStreakCat.src = EAR_FRAMES.up;
-      if(petEarDown) petEarDown.style.opacity = '0';
-      clearTimeout(earCycleTimer);
-      earCycleTimer = setTimeout(earCycleTick, EAR_HOLD_MS);
-    }
-    function stopEarMode(){
-      if(!earMode) return;
-      earMode = false;
-      clearTimeout(earCycleTimer);
-      clearTimeout(earIdleTimer);
-      if(petEarDown) petEarDown.style.opacity = '0';
-      // hand appearance back to whatever the normal hold/blink state should be
-      if(isHolding) petStreakCat.src = PET_FRAMES.full;
-    }
-    // Called from pointermove whenever the finger/mouse is clearly moving
-    // sideways (more horizontal than vertical) while held down.
-    function registerHorizontalDrag(){
-      if(!isHolding || angerPhase === 'tail') return;
-      startEarMode();
-      clearTimeout(earIdleTimer);
-      earIdleTimer = setTimeout(stopEarMode, EAR_DRAG_IDLE_MS);
-    }
-
     function petResetStretch(){
-      petStreakCat.style.transition = 'transform .25s ease, width .25s ease';
+      petStreakCat.style.transition = 'transform .25s ease';
       petStreakCat.style.transform = 'scaleY(1)';
-      petWidthScale = 1;
-      widthDragAccumulator = 0;
-      petStreakCat.style.width = PET_BASE_WIDTH + 'px';
       setTimeout(()=>{ petStreakCat.style.transition = ''; }, 260);
-    }
-    function changePetWidth(direction){
-      if(!isHolding || angerPhase === 'tail') return;
-      petWidthScale = Math.max(WIDTH_MIN, Math.min(WIDTH_MAX, petWidthScale + direction * 0.10));
-      petStreakCat.style.width = (PET_BASE_WIDTH * petWidthScale) + 'px';
     }
     function petBeginHold(){
       isHolding = true;
@@ -5028,7 +4819,6 @@ if ("serviceWorker" in navigator) {
     function petEndHold(){
       if(!isHolding) return;
       isHolding = false;
-      stopEarMode();
       petResetStretch();
       petStreakCat.src = PET_FRAMES.open;
       purrStop();
@@ -5043,9 +4833,6 @@ if ("serviceWorker" in navigator) {
       petStreakCat.addEventListener('pointerdown', e=>{
         e.preventDefault();
         holdStartY = e.clientY;
-        holdStartX = e.clientX;
-        lastMoveX = e.clientX;
-        lastMoveY = e.clientY;
         clearTimeout(holdTimer);
         try{ petStreakCat.setPointerCapture(e.pointerId); }catch(err){}
         // Unholdable while hiding behind its tail (shield mode): don't even
@@ -5064,31 +4851,6 @@ if ("serviceWorker" in navigator) {
         const dy = e.clientY - holdStartY; // negative = finger moved up
         const scale = 1 + Math.max(-STRETCH_MAX, Math.min(STRETCH_MAX, -dy / STRETCH_RANGE_PX));
         petStreakCat.style.transform = 'scaleY(' + scale + ')';
-
-        // left/right drag detection (independent of the up/down stretch above):
-        // only counts as a "sideways" move when this step moved more
-        // horizontally than vertically, so vertical stretching never
-        // accidentally triggers the ear cycle.
-        const stepDx = e.clientX - lastMoveX;
-        const stepDy = e.clientY - lastMoveY;
-        lastMoveX = e.clientX;
-        lastMoveY = e.clientY;
-        // Up/down keeps the original vertical stretch.
-        // Left/right is a separate control: every 28px changes width by 10%.
-        if(Math.abs(stepDx) > 0){
-          widthDragAccumulator += stepDx;
-          while(widthDragAccumulator >= WIDTH_STEP_PX){
-            changePetWidth(1);
-            widthDragAccumulator -= WIDTH_STEP_PX;
-          }
-          while(widthDragAccumulator <= -WIDTH_STEP_PX){
-            changePetWidth(-1);
-            widthDragAccumulator += WIDTH_STEP_PX;
-          }
-        }
-        if(Math.abs(stepDx) > 1.5 && Math.abs(stepDx) > Math.abs(stepDy)){
-          registerHorizontalDrag();
-        }
       });
       petStreakCat.addEventListener('pointerup', petHandleRelease);
       petStreakCat.addEventListener('pointercancel', petHandleRelease);
