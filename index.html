@@ -4929,6 +4929,8 @@ if ("serviceWorker" in navigator) {
     let earCycleTimer = null;
     let earIdleTimer = null;
     let holdStartX = 0, lastMoveX = 0, lastMoveY = 0;
+    let petWidthScale = 1;
+    let widthDragAccumulator = 0;
 
     // Soft, low "content" trill — quieter and gentler than the purr rumble,
     // layered on top of it right as the ears finish folding down each cycle.
@@ -4966,7 +4968,8 @@ if ("serviceWorker" in navigator) {
     function earCycleTick(){
       if(!earMode) return;
       earDown = !earDown;
-      if(petEarDown) petEarDown.style.opacity = earDown ? '1' : '0';
+      petStreakCat.src = earDown ? EAR_FRAMES.down : EAR_FRAMES.up;
+      if(petEarDown) petEarDown.style.opacity = '0';
       if(earDown) playComfySound();
       earCycleTimer = setTimeout(earCycleTick, EAR_HOLD_MS);
     }
@@ -4998,9 +5001,17 @@ if ("serviceWorker" in navigator) {
     }
 
     function petResetStretch(){
-      petStreakCat.style.transition = 'transform .25s ease';
+      petStreakCat.style.transition = 'transform .25s ease, width .25s ease';
       petStreakCat.style.transform = 'scaleY(1)';
+      petWidthScale = 1;
+      widthDragAccumulator = 0;
+      petStreakCat.style.width = PET_BASE_WIDTH + 'px';
       setTimeout(()=>{ petStreakCat.style.transition = ''; }, 260);
+    }
+    function changePetWidth(direction){
+      if(!isHolding || angerPhase === 'tail') return;
+      petWidthScale = Math.max(WIDTH_MIN, Math.min(WIDTH_MAX, petWidthScale + direction * 0.10));
+      petStreakCat.style.width = (PET_BASE_WIDTH * petWidthScale) + 'px';
     }
     function petBeginHold(){
       isHolding = true;
@@ -5062,6 +5073,19 @@ if ("serviceWorker" in navigator) {
         const stepDy = e.clientY - lastMoveY;
         lastMoveX = e.clientX;
         lastMoveY = e.clientY;
+        // Up/down keeps the original vertical stretch.
+        // Left/right is a separate control: every 28px changes width by 10%.
+        if(Math.abs(stepDx) > 0){
+          widthDragAccumulator += stepDx;
+          while(widthDragAccumulator >= WIDTH_STEP_PX){
+            changePetWidth(1);
+            widthDragAccumulator -= WIDTH_STEP_PX;
+          }
+          while(widthDragAccumulator <= -WIDTH_STEP_PX){
+            changePetWidth(-1);
+            widthDragAccumulator += WIDTH_STEP_PX;
+          }
+        }
         if(Math.abs(stepDx) > 1.5 && Math.abs(stepDx) > Math.abs(stepDy)){
           registerHorizontalDrag();
         }
