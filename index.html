@@ -64,6 +64,13 @@
   }
 
   /* ---------- header ---------- */
+  /* Positioning context for .room-status-bar (see its comment below) — its
+     own box height is just the topbar's, so it never grows/shrinks when the
+     room bar shows, hides, or expands. */
+  .header-wrap{
+    position:relative;
+    flex-shrink:0;
+  }
   .topbar{
     display:flex;
     align-items:baseline;
@@ -1292,8 +1299,17 @@
   .room-modal-cancel{ background:rgba(255,255,255,0.08); color:var(--text-secondary); }
   .room-modal-join{ background:var(--purple-bright); color:#fff; }
 
-  /* sits right under the "Purple·Line" wordmark, narrow — not a full-width bar */
-  .room-status-bar{ display:none; flex-shrink:0; width:fit-content; max-width:190px; margin:6px clamp(14px,5vw,24px) 0; border:1px solid rgba(147,51,234,0.25); border-radius:10px; background:rgba(147,51,234,0.06); overflow:hidden; }
+  /* Positioned OUT of normal flow (absolute, anchored under the topbar) so it
+     never changes .header-wrap's box height. It used to be a plain flex
+     sibling of .topbar inside .app: showing/expanding it shrank .canvas-wrap
+     (flex:1) on the fly, which moved canvas-wrap's top edge down without any
+     redraw — render()'s center() reads wrap.clientHeight, but nothing calls
+     render() just because the room bar toggled, so the already-drawn rays
+     stayed at their old pixel coordinates and visually "fell" down by however
+     many pixels the bar (and, worse, its expanded body/cat panel) took up.
+     Taking it out of flow via position:absolute fixes this at the root:
+     canvas-wrap's size is now completely independent of the room bar. */
+  .room-status-bar{ display:none; position:absolute; top:100%; left:0; z-index:5; width:fit-content; max-width:190px; margin:6px clamp(14px,5vw,24px) 0; border:1px solid rgba(147,51,234,0.25); border-radius:10px; background:rgba(147,51,234,0.06); overflow:hidden; }
   .room-status-bar.visible{ display:block; }
   .room-status-head{ display:flex; align-items:center; gap:6px; padding:5px 9px; cursor:pointer; }
   .room-status-dot{ width:7px; height:7px; border-radius:50%; background:var(--text-tertiary); flex-shrink:0; }
@@ -1940,33 +1956,35 @@ if ("serviceWorker" in navigator) {
 </script>
 
 <div class="app">
-  <div class="topbar">
-    <div class="wordmark" id="wordmark">Purple<span>·</span>Line</div>
-    <div class="top-actions">
-      <button type="button" class="theme-btn" id="themeBtn" aria-label="Enable dark mode" title="Dark mode">☾</button>
-      <div class="today" id="todayLabel"></div>
-    </div>
-  </div>
-
-  <div class="room-status-bar" id="roomStatusBar">
-    <div class="room-status-head" id="roomStatusHead">
-      <span class="room-status-dot" id="roomStatusDot"></span>
-      <span class="room-status-title" id="roomStatusTitle">Room</span>
-      <button type="button" class="room-settings-btn" id="roomSettingsBtn" title="Edit profile">⚙</button>
-      <span class="room-status-chevron">▾</span>
-    </div>
-    <div class="room-status-body" id="roomStatusBody">
-      <div id="roomMemberList"></div>
-      <div class="pet-streak-box" id="petStreakBox">
-        <div class="pet-streak-row">
-          <div class="pet-cat-wrap">
-            <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
-            <img class="pet-anger-symbol" id="petAngerSymbol" src="anger-symbol.png" alt="">
-          </div>
-          <button type="button" class="paper-note" id="paperNoteBtn" title="Room drawing" aria-label="Open room drawing"></button>
-        </div>
+  <div class="header-wrap">
+    <div class="topbar">
+      <div class="wordmark" id="wordmark">Purple<span>·</span>Line</div>
+      <div class="top-actions">
+        <button type="button" class="theme-btn" id="themeBtn" aria-label="Enable dark mode" title="Dark mode">☾</button>
+        <div class="today" id="todayLabel"></div>
       </div>
-      <button type="button" class="room-leave-btn" id="roomLeaveBtn">Leave Room</button>
+    </div>
+
+    <div class="room-status-bar" id="roomStatusBar">
+      <div class="room-status-head" id="roomStatusHead">
+        <span class="room-status-dot" id="roomStatusDot"></span>
+        <span class="room-status-title" id="roomStatusTitle">Room</span>
+        <button type="button" class="room-settings-btn" id="roomSettingsBtn" title="Edit profile">⚙</button>
+        <span class="room-status-chevron">▾</span>
+      </div>
+      <div class="room-status-body" id="roomStatusBody">
+        <div id="roomMemberList"></div>
+        <div class="pet-streak-box" id="petStreakBox">
+          <div class="pet-streak-row">
+            <div class="pet-cat-wrap">
+              <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
+              <img class="pet-anger-symbol" id="petAngerSymbol" src="anger-symbol.png" alt="">
+            </div>
+            <button type="button" class="paper-note" id="paperNoteBtn" title="Room drawing" aria-label="Open room drawing"></button>
+          </div>
+        </div>
+        <button type="button" class="room-leave-btn" id="roomLeaveBtn">Leave Room</button>
+      </div>
     </div>
   </div>
 
@@ -4816,8 +4834,17 @@ if ("serviceWorker" in navigator) {
         e.preventDefault();
         holdStartY = e.clientY;
         clearTimeout(holdTimer);
-        holdTimer = setTimeout(petBeginHold, HOLD_DELAY_MS);
         try{ petStreakCat.setPointerCapture(e.pointerId); }catch(err){}
+        // Unholdable while hiding behind its tail (shield mode): don't even
+        // arm the hold timer, so a press-and-hold can never turn into
+        // petBeginHold() here. Without this, holding past HOLD_DELAY_MS while
+        // hiding silently cancelled the whole tail state (petBeginHold resets
+        // angerPhase back to 'normal') — i.e. you could just pick the cat up
+        // out of hiding, which defeats the point of it hiding. Now a press
+        // while hiding can only ever resolve as a plain tap on release (see
+        // handleAngryTap's tailMode branch).
+        if(angerPhase === 'tail') return;
+        holdTimer = setTimeout(petBeginHold, HOLD_DELAY_MS);
       });
       petStreakCat.addEventListener('pointermove', e=>{
         if(!isHolding) return;
