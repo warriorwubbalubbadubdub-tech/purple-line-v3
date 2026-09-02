@@ -1348,6 +1348,12 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
+  /* cat-roll-mid only: +15% width and +20% length from its current size */
+  .pet-cat.roll-mid{
+    width:88.55px;
+    height:102px;
+  }
+
   /* wrapper so the anger symbol can sit positioned on top of the cat */
   .pet-cat-wrap{
     position:relative;
@@ -4571,6 +4577,13 @@ if ("serviceWorker" in navigator) {
       right: 'cat-roll-left.png'
     };
     Object.values(ROLL_FRAMES).forEach(src=>{ const im = new Image(); im.src = src; });
+    // Keep the larger dimensions limited to the middle roll frame only.
+    if(petStreakCat){
+      const rollMidObserver = new MutationObserver(()=>{
+        petStreakCat.classList.toggle('roll-mid', petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) || petStreakCat.src.endsWith(ROLL_FRAMES.mid));
+      });
+      rollMidObserver.observe(petStreakCat, { attributes:true, attributeFilter:['src'] });
+    }
     const ROLL_THRESHOLD_PX = 18; // horizontal travel (px) needed to switch away from the middle frame
     const ROLL_SOUND_SRC = 'cat-roll-purr.mp3';
 
