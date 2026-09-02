@@ -1348,16 +1348,24 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
-  /* cat-roll-mid only: enlarge the photo itself without changing its layout box,
-     so the room list and surrounding elements keep exactly the same size */
-  .pet-cat.roll-mid{
-    transform:scaleX(1.20) scaleY(1.25);
-  }
-
-  /* wrapper so the anger symbol can sit positioned on top of the cat */
+  /* Keep the cat wrapper's layout box unchanged, but make the actual
+     cat-roll-mid image larger inside/around that same box. */
   .pet-cat-wrap{
     position:relative;
     display:inline-block;
+    width:77px;
+    height:85px;
+  }
+
+  .pet-cat.roll-mid{
+    position:absolute;
+    width:92.4px;
+    height:106.25px;
+    left:50%;
+    top:50%;
+    margin:0;
+    transform-origin:50% 100%;
+    object-fit:contain;
   }
   .pet-anger-symbol{
     position:absolute;
