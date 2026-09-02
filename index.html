@@ -1329,6 +1329,22 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
+  /* wrapper so the anger symbol can sit positioned on top of the cat */
+  .pet-cat-wrap{
+    position:relative;
+    display:inline-block;
+  }
+  .pet-anger-symbol{
+    position:absolute;
+    top:2%;
+    left:50%;
+    width:32%;
+    pointer-events:none;
+    opacity:0;
+    transform:translateX(-50%) scale(0.4);
+    filter:drop-shadow(0 0 6px rgba(220,20,20,0.35));
+  }
+
   /* ---------- black paper (shared room drawing) ---------- */
   .pet-streak-row{
     display:flex;
@@ -1943,7 +1959,10 @@ if ("serviceWorker" in navigator) {
       <div id="roomMemberList"></div>
       <div class="pet-streak-box" id="petStreakBox">
         <div class="pet-streak-row">
-          <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
+          <div class="pet-cat-wrap">
+            <img class="pet-cat" id="petStreakCat" src="cat-open.png" alt="pet cat">
+            <img class="pet-anger-symbol" id="petAngerSymbol" src="anger-symbol.png" alt="">
+          </div>
           <button type="button" class="paper-note" id="paperNoteBtn" title="Room drawing" aria-label="Open room drawing"></button>
         </div>
       </div>
@@ -4596,6 +4615,160 @@ if ("serviceWorker" in navigator) {
       purrNoiseGain = null; purrLFO = null; purrGain = null; purrLFOGain = null;
     }
 
+    // ---- angry-cat click escalation (separate from the hold-to-purr petting above) ----
+    // Uses 2 more image files placed next to this HTML (same folder as the
+    // cat-open/half/full frames above). Rename your uploaded photos to these
+    // exact names, or edit the paths below to match wherever they live in
+    // the repo:
+    //   cat-angry.png     -> the annoyed/squinting photo, shown while tapping
+    //   cat-tail-hide.png -> tail-over-face photo, shown after tapping stops
+    //   anger-symbol.png  -> small red mark that pulses on the cat's side
+    const ANGRY_FRAMES = {
+      angry: 'cat-angry.png',
+      tail:  'cat-tail-hide.png'
+    };
+    const ANGER_SYMBOL_SRC = 'anger-symbol.png';
+    [ANGRY_FRAMES.angry, ANGRY_FRAMES.tail, ANGER_SYMBOL_SRC].forEach(src=>{ const im = new Image(); im.src = src; });
+
+    const petAngerSymbol   = document.getElementById('petAngerSymbol');
+    const ANGER_TRIGGER    = 5;     // taps before it snaps straight to hiding (no need to stop tapping)
+    const MAX_ANGER        = 8;     // taps for the pulse/sound to reach full intensity
+    const ANGER_IDLE_MS    = 650;   // pause after a tap that also counts as "stopped tapping"
+    const ANGER_TAIL_MS    = 15000; // how long the tail-hiding photo stays up
+    const ANGER_BUMP_SCALE = 1.10;  // +10% size per tap, springs back after
+
+    let angerLevel    = 0;
+    let angerPhase    = 'normal'; // 'normal' | 'tail'
+    let angerIdleTimer = null;
+    let angerTailTimer = null;
+    let angerPulseRAF  = null;
+    let angerPulseT    = 0;
+    let angerAudioCtx  = null;
+    let angerNoiseBuf  = null; // shared noise buffer for the soft tap sound
+
+    function ensureAngerAudio(){
+      if(!angerAudioCtx){
+        try{ angerAudioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch(e){ angerAudioCtx = null; }
+      }
+      if(angerAudioCtx && angerAudioCtx.state === 'suspended') angerAudioCtx.resume();
+    }
+
+    // Normal taps: a soft, percussive "tap" (filtered noise, not a tone) that
+    // gets a touch brighter/sharper with anger. Taps landed while the tail is
+    // already hiding the face: the harsher growl-ish tone (kept as-is).
+    function playAngryClick(level, tailMode){
+      if(!angerAudioCtx) return;
+      const now = angerAudioCtx.currentTime;
+      if(tailMode){
+        const osc  = angerAudioCtx.createOscillator();
+        const gain = angerAudioCtx.createGain();
+        const filt = angerAudioCtx.createBiquadFilter();
+        osc.type = 'sawtooth';
+        filt.type = 'lowpass';
+        filt.frequency.value = 900 + level*40;
+        const freq = 140 + Math.random()*30;
+        osc.frequency.setValueAtTime(freq, now);
+        osc.frequency.exponentialRampToValueAtTime(freq*0.6, now + 0.16);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.22, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+        osc.connect(filt); filt.connect(gain); gain.connect(angerAudioCtx.destination);
+        osc.start(now); osc.stop(now + 0.24);
+      } else {
+        if(!angerNoiseBuf) angerNoiseBuf = makeNoiseBuffer(angerAudioCtx);
+        const t     = Math.min(level / MAX_ANGER, 1);
+        const noise = angerAudioCtx.createBufferSource();
+        noise.buffer = angerNoiseBuf;
+        const filt = angerAudioCtx.createBiquadFilter();
+        filt.type = 'bandpass';
+        filt.frequency.value = 1400 + t*1600; // a bit brighter as anger climbs
+        filt.Q.value = 1.1;
+        const gain = angerAudioCtx.createGain();
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.3 + t*0.15, now + 0.004);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+        noise.connect(filt); filt.connect(gain); gain.connect(angerAudioCtx.destination);
+        noise.start(now, 0, 0.06);
+      }
+    }
+
+    // Pulses the red symbol bigger/smaller under the ears; speed and
+    // amplitude both climb with angerLevel so it visibly escalates.
+    function angerPulseLoop(){
+      if(!petAngerSymbol) return;
+      if(angerPhase !== 'normal' || angerLevel <= 0){
+        petAngerSymbol.style.opacity = 0;
+        angerPulseRAF = null;
+        return;
+      }
+      angerPulseT += 0.001 * (10 + angerLevel*6);
+      const amt   = angerLevel / MAX_ANGER;
+      const wave  = (Math.sin(angerPulseT) + 1) / 2;
+      const scale = 0.55 + amt*0.55 + wave * (0.15 + amt*0.35);
+      petAngerSymbol.style.opacity = Math.min(0.25 + amt*0.85, 1);
+      petAngerSymbol.style.transform = 'translateX(-50%) scale(' + scale.toFixed(3) + ')';
+      angerPulseRAF = requestAnimationFrame(angerPulseLoop);
+    }
+    function angerStartPulse(){
+      if(!angerPulseRAF) angerPulseRAF = requestAnimationFrame(angerPulseLoop);
+    }
+
+    function angerBumpCat(){
+      petStreakCat.style.transform = 'scale(' + ANGER_BUMP_SCALE + ')';
+      clearTimeout(angerBumpCat._t);
+      angerBumpCat._t = setTimeout(()=>{ if(!isHolding) petStreakCat.style.transform = 'scale(1)'; }, 150);
+    }
+
+    function angerEnterTail(){
+      angerPhase = 'tail';
+      stopPetAnim();
+      petStreakCat.src = ANGRY_FRAMES.tail;
+      if(petAngerSymbol) petAngerSymbol.style.opacity = 0;
+      clearTimeout(angerTailTimer);
+      angerTailTimer = setTimeout(angerExitTail, ANGER_TAIL_MS);
+    }
+    function angerExitTail(){
+      angerPhase = 'normal';
+      angerLevel = 0;
+      petStreakCat.src = PET_FRAMES.open;
+      if(roomStatusBar.classList.contains('expanded')) startPetAnim();
+    }
+
+    // Called on a plain tap (not a hold) — see petHandleRelease below.
+    function handleAngryTap(){
+      ensureAngerAudio();
+      angerBumpCat();
+
+      if(angerPhase === 'tail'){
+        // still tappable while hiding — sound gets harsher, and it keeps
+        // hiding for a fresh 15s stretch counted from this last tap
+        playAngryClick(angerLevel, true);
+        clearTimeout(angerTailTimer);
+        angerTailTimer = setTimeout(angerExitTail, ANGER_TAIL_MS);
+        return;
+      }
+
+      angerLevel = Math.min(MAX_ANGER, angerLevel + 1);
+      petStreakCat.src = ANGRY_FRAMES.angry;
+      playAngryClick(angerLevel, false);
+      angerStartPulse();
+
+      // reached the trigger count -> snap straight into hiding, no need
+      // to wait for the taps to stop
+      if(angerLevel >= ANGER_TRIGGER){
+        clearTimeout(angerIdleTimer);
+        angerEnterTail();
+        return;
+      }
+
+      // otherwise it still hides automatically once tapping pauses
+      clearTimeout(angerIdleTimer);
+      angerIdleTimer = setTimeout(()=>{
+        if(angerPhase === 'normal' && angerLevel > 0) angerEnterTail();
+      }, ANGER_IDLE_MS);
+    }
+
     function petResetStretch(){
       petStreakCat.style.transition = 'transform .25s ease';
       petStreakCat.style.transform = 'scaleY(1)';
@@ -4604,6 +4777,12 @@ if ("serviceWorker" in navigator) {
     function petBeginHold(){
       isHolding = true;
       stopPetAnim();                        // pause the automatic 5s blink while petting
+      // a hold overrides any in-progress anger — cancel it cleanly
+      clearTimeout(angerIdleTimer);
+      clearTimeout(angerTailTimer);
+      angerPhase = 'normal';
+      angerLevel = 0;
+      if(petAngerSymbol) petAngerSymbol.style.opacity = 0;
       petStreakCat.src = PET_FRAMES.full;   // eyes close while held
       purrStart();
     }
@@ -4617,7 +4796,7 @@ if ("serviceWorker" in navigator) {
     }
     function petHandleRelease(){
       clearTimeout(holdTimer);
-      if(isHolding) petEndHold(); else petPlayBlink(); // wasn't held long enough -> treat as a plain tap
+      if(isHolding) petEndHold(); else handleAngryTap(); // wasn't held long enough -> treat as a plain tap
     }
 
     if(petStreakCat){
