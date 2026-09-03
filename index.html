@@ -1347,6 +1347,7 @@
     transform-origin:50% 100%;
   }
   .pet-cat:active{ cursor:grabbing; }
+  .pet-cat{ transition: transform .12s ease, opacity .08s ease; }
 
   /* cat-roll-mid only: enlarge the photo itself without changing its layout box,
      so the room list and surrounding elements keep exactly the same size */
@@ -4556,7 +4557,7 @@ if ("serviceWorker" in navigator) {
     //               a soft synthesized purring rumble plays the whole time.
     const HOLD_DELAY_MS   = 160;  // how long a press must last before it counts as "holding" instead of a tap
     const STRETCH_RANGE_PX= 70;   // finger travel (px) needed for the full stretch amount
-    const STRETCH_MAX     = 0.18; // max +/-18% vertical stretch
+    const STRETCH_MAX     = 0.30; // max +/-30% vertical stretch
 
     let holdTimer = null;
     let isHolding = false;
@@ -4901,7 +4902,7 @@ if ("serviceWorker" in navigator) {
     }
 
     function petResetStretch(){
-      petStreakCat.style.transition = 'transform .25s ease';
+      petStreakCat.style.transition = 'transform .12s ease, opacity .08s ease';
       // Never reset the roll-mid enlargement here. The middle roll frame is
       // intentionally larger than the other roll frames.
       const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
@@ -4977,12 +4978,22 @@ if ("serviceWorker" in navigator) {
           isRolling = true;
           rollSoundStart();
         }
+        const currentRoll = petStreakCat.src;
+        const setRollFrame = (frame)=>{
+          if(currentRoll.endsWith('/' + frame) || currentRoll.endsWith(frame)) return;
+          // Very short opacity crossfade makes the three PNGs change less abruptly.
+          petStreakCat.style.opacity = '0.78';
+          petStreakCat.src = frame;
+          requestAnimationFrame(()=>{
+            requestAnimationFrame(()=>{ petStreakCat.style.opacity = '1'; });
+          });
+        };
         if(dx <= -ROLL_THRESHOLD_PX){
-          petStreakCat.src = ROLL_FRAMES.left;
+          setRollFrame(ROLL_FRAMES.left);
         } else if(dx >= ROLL_THRESHOLD_PX){
-          petStreakCat.src = ROLL_FRAMES.right;
+          setRollFrame(ROLL_FRAMES.right);
         } else {
-          petStreakCat.src = ROLL_FRAMES.mid;
+          setRollFrame(ROLL_FRAMES.mid);
         }
       });
       petStreakCat.addEventListener('pointerup', petHandleRelease);
