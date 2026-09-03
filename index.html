@@ -1348,24 +1348,16 @@
   }
   .pet-cat:active{ cursor:grabbing; }
 
-  /* Keep the cat wrapper's layout box unchanged, but make the actual
-     cat-roll-mid image larger inside/around that same box. */
+  /* cat-roll-mid only: enlarge the photo itself without changing its layout box,
+     so the room list and surrounding elements keep exactly the same size */
+  .pet-cat.roll-mid{
+    transform:scaleX(1.20) scaleY(1.25);
+  }
+
+  /* wrapper so the anger symbol can sit positioned on top of the cat */
   .pet-cat-wrap{
     position:relative;
     display:inline-block;
-    width:77px;
-    height:85px;
-  }
-
-  .pet-cat.roll-mid{
-    position:absolute;
-    width:92.4px;
-    height:106.25px;
-    left:50%;
-    top:50%;
-    margin:0;
-    transform-origin:50% 100%;
-    object-fit:contain;
   }
   .pet-anger-symbol{
     position:absolute;
@@ -4910,7 +4902,11 @@ if ("serviceWorker" in navigator) {
 
     function petResetStretch(){
       petStreakCat.style.transition = 'transform .25s ease';
-      petStreakCat.style.transform = 'scaleY(1)';
+      // Never reset the roll-mid enlargement here. The middle roll frame is
+      // intentionally larger than the other roll frames.
+      const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
+                    petStreakCat.src.endsWith(ROLL_FRAMES.mid);
+      petStreakCat.style.transform = isMid ? 'scaleX(1.20) scaleY(1.25)' : 'scale(1)';
       setTimeout(()=>{ petStreakCat.style.transition = ''; }, 260);
     }
     function petBeginHold(){
@@ -4964,7 +4960,15 @@ if ("serviceWorker" in navigator) {
         if(!isHolding) return;
         const dy = e.clientY - holdStartY; // negative = finger moved up
         const scale = 1 + Math.max(-STRETCH_MAX, Math.min(STRETCH_MAX, -dy / STRETCH_RANGE_PX));
-        petStreakCat.style.transform = 'scaleY(' + scale + ')';
+        // The old line above overwrote the .roll-mid transform on every
+        // pointermove, which made cat-roll-mid suddenly become smaller.
+        // Keep its 20% width / 25% height enlargement while applying the
+        // vertical stretch on top of it.
+        const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
+                      petStreakCat.src.endsWith(ROLL_FRAMES.mid);
+        petStreakCat.style.transform = isMid
+          ? 'scaleX(1.20) scaleY(' + (1.25 * scale) + ')'
+          : 'scaleY(' + scale + ')';
 
         // left/right roll: swap between the 3 roll frames based on horizontal
         // drag distance, and loop the rolling purr sound while it's moving
