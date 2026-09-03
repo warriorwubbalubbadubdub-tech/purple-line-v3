@@ -1351,7 +1351,7 @@
   /* cat-roll-mid only: enlarge the photo itself without changing its layout box,
      so the room list and surrounding elements keep exactly the same size */
   .pet-cat.roll-mid{
-    transform:scaleX(1.20) scaleY(1.25);
+    transform:translateY(3px) scaleX(1.20) scaleY(1.29);
   }
 
   /* wrapper so the anger symbol can sit positioned on top of the cat */
@@ -4906,7 +4906,7 @@ if ("serviceWorker" in navigator) {
       // intentionally larger than the other roll frames.
       const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
                     petStreakCat.src.endsWith(ROLL_FRAMES.mid);
-      petStreakCat.style.transform = isMid ? 'scaleX(1.20) scaleY(1.25)' : 'scale(1)';
+      petStreakCat.style.transform = isMid ? 'translateY(3px) scaleX(1.20) scaleY(1.29)' : 'scale(1)';
       setTimeout(()=>{ petStreakCat.style.transition = ''; }, 260);
     }
     function petBeginHold(){
@@ -4967,7 +4967,7 @@ if ("serviceWorker" in navigator) {
         const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
                       petStreakCat.src.endsWith(ROLL_FRAMES.mid);
         petStreakCat.style.transform = isMid
-          ? 'scaleX(1.20) scaleY(' + (1.25 * scale) + ')'
+          ? 'translateY(3px) scaleX(1.20) scaleY(' + (1.29 * scale) + ')'
           : 'scaleY(' + scale + ')';
 
         // left/right roll: swap between the 3 roll frames based on horizontal
