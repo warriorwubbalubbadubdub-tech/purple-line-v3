@@ -4467,8 +4467,15 @@ if ("serviceWorker" in navigator) {
       saveTimerState();
       renderMenuVoices();
       renderTomorrowList();
-      void wrap.offsetHeight;
-      render(); updateControls();
+      /* Let the browser finish the mode's layout before calculating the canvas center.
+         Two frames are intentional: the first applies the mode/theme layout, and the
+         second renders after flex geometry has settled, matching a fresh restart. */
+      requestAnimationFrame(()=>{
+        requestAnimationFrame(()=>{
+          render();
+          updateControls();
+        });
+      });
     }
 
     progModeBtn.addEventListener('click', ()=>{
