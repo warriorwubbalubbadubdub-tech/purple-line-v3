@@ -1401,14 +1401,14 @@
   }
   /* closed black book, shown before any drawing has been saved */
   .paper-note{
-    width:26px;
-    height:34px;
+    width:44px;
+    height:58px;
     flex-shrink:0;
     margin-bottom:6px;
     border:none;
-    border-radius:2px 6px 6px 2px;
+    border-radius:3px 9px 9px 3px;
     background:#141014 no-repeat center/cover;
-    box-shadow:0 2px 6px rgba(0,0,0,0.4), inset 0 0 0 1px rgba(255,255,255,0.06);
+    box-shadow:0 3px 9px rgba(0,0,0,0.42), inset 0 0 0 1px rgba(255,255,255,0.06);
     cursor:pointer;
     padding:0;
     position:relative;
@@ -1417,16 +1417,16 @@
   .paper-note::before{ /* spine */
     content:'';
     position:absolute;
-    left:3px; top:2px; bottom:2px;
-    width:2px;
+    left:5px; top:3px; bottom:3px;
+    width:3px;
     background:rgba(255,255,255,0.16);
     border-radius:1px;
   }
   .paper-note::after{ /* page edges */
     content:'';
     position:absolute;
-    right:2px; top:3px; bottom:3px;
-    width:2px;
+    right:3px; top:5px; bottom:5px;
+    width:3px;
     background:rgba(255,255,255,0.1);
     border-radius:0 2px 2px 0;
   }
@@ -1496,6 +1496,28 @@
     box-shadow:inset 0 0 0 1px rgba(0,0,0,0.2);
   }
   .draw-color-swatch.selected{ box-shadow:0 0 0 2px #000, 0 0 0 4px var(--purple-core); }
+  .draw-tools{
+    display:flex;
+    gap:8px;
+    justify-content:center;
+  }
+  .draw-tool-btn{
+    width:34px; height:34px;
+    border-radius:9px;
+    border:1px solid rgba(255,255,255,0.14);
+    background:rgba(255,255,255,0.08);
+    color:#f2edf7;
+    font-size:15px;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    transition:background .15s ease, opacity .15s ease;
+  }
+  .draw-tool-btn:hover{ background:rgba(255,255,255,0.16); }
+  .draw-tool-btn.selected{ background:var(--purple-bright); border-color:var(--purple-bright); }
+  .draw-tool-btn:disabled{ opacity:0.35; cursor:default; }
+  .draw-tool-btn:disabled:hover{ background:rgba(255,255,255,0.08); }
   .draw-canvas-wrap{
     flex:1;
     min-height:0;
@@ -2025,6 +2047,11 @@ if ("serviceWorker" in navigator) {
         <button type="button" class="draw-exit-btn" id="drawExitBtn" aria-label="Close">✕</button>
       </div>
       <div class="draw-colors" id="drawColors"></div>
+      <div class="draw-tools">
+        <button type="button" class="draw-tool-btn" id="drawBucketBtn" title="Fill closed area">🪣</button>
+        <button type="button" class="draw-tool-btn" id="drawUndoBtn" title="Undo" disabled>↩</button>
+        <button type="button" class="draw-tool-btn" id="drawRedoBtn" title="Redo" disabled>↪</button>
+      </div>
       <div class="draw-canvas-wrap">
         <canvas id="drawCanvas" width="600" height="800"></canvas>
       </div>
@@ -4464,17 +4491,24 @@ if ("serviceWorker" in navigator) {
       }
       if(statusWorkVal) statusWorkVal.textContent = formatTime(totalWorkMs);
       if(statusBreakVal) statusBreakVal.textContent = formatTime(totalBreakMs);
-      saveTimerState();
-      renderMenuVoices();
-      renderTomorrowList();
-      /* Let the browser finish the mode's layout before calculating the canvas center.
-         Two frames are intentional: the first applies the mode/theme layout, and the
-         second renders after flex geometry has settled, matching a fresh restart. */
+      /*
+         Mode changes update the body class and therefore the visual rules used
+         by the central SVG. Do not rely on the same synchronous layout pass
+         that performed the class change: on some browsers (especially mobile)
+         the SVG can keep the previous mode's geometry/animation until the
+         next frame. Force layout once, render immediately, then render again
+         after the browser has committed the new mode styles.
+      */
+      try{ saveTimerState(); }catch(e){}
+      try{ renderMenuVoices(); }catch(e){}
+      try{ renderTomorrowList(); }catch(e){}
+      try{ void document.body.offsetHeight; void wrap.offsetHeight; }catch(e){}
+      render();
+      updateControls();
       requestAnimationFrame(()=>{
-        requestAnimationFrame(()=>{
-          render();
-          updateControls();
-        });
+        try{ void document.body.offsetHeight; void wrap.offsetHeight; }catch(e){}
+        render();
+        updateControls();
       });
     }
 
@@ -5229,6 +5263,16 @@ if ("serviceWorker" in navigator) {
     let drawCtx = null;
     let isDrawingStroke = false;
     let lastPt = null;
+    let drawTool = 'pen';      // 'pen' | 'bucket'
+
+    // ---- undo/redo history ----
+    // Simple full-canvas snapshot stack. The canvas is small (600x800) and
+    // strokes/fills are infrequent user actions, so snapshotting on every
+    // completed action (not every pointermove) is cheap enough and far
+    // simpler than tracking diffs.
+    const HISTORY_LIMIT = 30;
+    let drawHistory = [];
+    let historyIndex = -1;
 
     const drawOverlay = document.getElementById('drawOverlay');
     const drawCanvas = document.getElementById('drawCanvas');
@@ -5237,19 +5281,104 @@ if ("serviceWorker" in navigator) {
     const drawSaveBtn = document.getElementById('drawSaveBtn');
     const drawClearBtn = document.getElementById('drawClearBtn');
     const drawReverseBtn = document.getElementById('drawReverseBtn');
+    const drawBucketBtn = document.getElementById('drawBucketBtn');
+    const drawUndoBtn = document.getElementById('drawUndoBtn');
+    const drawRedoBtn = document.getElementById('drawRedoBtn');
     const drawStatus = document.getElementById('drawStatus');
+
+    function updateUndoRedoButtons(){
+      if(drawUndoBtn) drawUndoBtn.disabled = historyIndex <= 0;
+      if(drawRedoBtn) drawRedoBtn.disabled = historyIndex >= drawHistory.length - 1;
+    }
+    function pushHistory(){
+      if(!drawCtx) return;
+      // Any new action after an undo discards the redo branch, same as
+      // standard undo/redo stacks everywhere.
+      drawHistory = drawHistory.slice(0, historyIndex + 1);
+      drawHistory.push(drawCtx.getImageData(0, 0, drawCanvas.width, drawCanvas.height));
+      if(drawHistory.length > HISTORY_LIMIT) drawHistory.shift();
+      historyIndex = drawHistory.length - 1;
+      updateUndoRedoButtons();
+    }
+    function restoreHistory(idx){
+      if(!drawCtx || idx < 0 || idx >= drawHistory.length) return;
+      drawCtx.putImageData(drawHistory[idx], 0, 0);
+      historyIndex = idx;
+      updateUndoRedoButtons();
+    }
+    function undoDraw(){ if(historyIndex > 0) restoreHistory(historyIndex - 1); }
+    function redoDraw(){ if(historyIndex < drawHistory.length - 1) restoreHistory(historyIndex + 1); }
 
     function fillCanvasBg(){
       if(!drawCtx) return;
       drawCtx.fillStyle = paperBg;
       drawCtx.fillRect(0, 0, drawCanvas.width, drawCanvas.height);
+      pushHistory();
+    }
+
+    // ---- bucket fill (flood fill) ----
+    // Classic 4-directional stack-based flood fill over the canvas's pixel
+    // data. Fills the connected region of similar color starting at the
+    // tapped point — i.e. "fill this closed area you drew" — stopping at
+    // any boundary drawn in a different color.
+    function hexToRgba(hex){
+      const h = hex.replace('#','');
+      const r = parseInt(h.substring(0,2),16);
+      const g = parseInt(h.substring(2,4),16);
+      const b = parseInt(h.substring(4,6),16);
+      return [r,g,b,255];
+    }
+    function colorsMatch(d, i, target, tolerance){
+      return Math.abs(d[i]-target[0])   <= tolerance &&
+             Math.abs(d[i+1]-target[1]) <= tolerance &&
+             Math.abs(d[i+2]-target[2]) <= tolerance &&
+             Math.abs(d[i+3]-target[3]) <= tolerance;
+    }
+    function floodFill(startX, startY, fillHex){
+      if(!drawCtx) return;
+      const w = drawCanvas.width, h = drawCanvas.height;
+      startX = Math.max(0, Math.min(w-1, Math.round(startX)));
+      startY = Math.max(0, Math.min(h-1, Math.round(startY)));
+      const imgData = drawCtx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+      const startIdx = (startY*w + startX) * 4;
+      const target = [d[startIdx], d[startIdx+1], d[startIdx+2], d[startIdx+3]];
+      const fill = hexToRgba(fillHex);
+      // Already the fill color — nothing to do.
+      if(colorsMatch(d, startIdx, fill, 0)) return;
+      const tolerance = 32; // forgiving enough for anti-aliased stroke edges
+      const stack = [[startX, startY]];
+      const visited = new Uint8Array(w*h);
+      while(stack.length){
+        const [x, y] = stack.pop();
+        if(x<0 || x>=w || y<0 || y>=h) continue;
+        const vIdx = y*w + x;
+        if(visited[vIdx]) continue;
+        const i = vIdx*4;
+        if(!colorsMatch(d, i, target, tolerance)) continue;
+        visited[vIdx] = 1;
+        d[i]=fill[0]; d[i+1]=fill[1]; d[i+2]=fill[2]; d[i+3]=fill[3];
+        stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
+      }
+      drawCtx.putImageData(imgData, 0, 0);
+      pushHistory();
     }
     function reversePaper(){
-      // Flips the paper to the opposite color and starts it fresh — a true
-      // pixel-by-pixel invert of existing strokes isn't what "reverse the
-      // paper to white" means here, it means: give me a white page instead.
+      // Flips the paper to the opposite color WITHOUT losing the drawing:
+      // every pixel is inverted in place, so black<->white and any other
+      // colors flip too, but nothing you drew gets erased.
+      if(!drawCtx) return;
+      const w = drawCanvas.width, h = drawCanvas.height;
+      const imgData = drawCtx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+      for(let i=0; i<d.length; i+=4){
+        d[i]   = 255 - d[i];
+        d[i+1] = 255 - d[i+1];
+        d[i+2] = 255 - d[i+2];
+      }
+      drawCtx.putImageData(imgData, 0, 0);
       paperBg = (paperBg === '#000000') ? '#ffffff' : '#000000';
-      fillCanvasBg();
+      pushHistory();
       drawStatus.textContent = (paperBg === '#ffffff') ? 'White paper — draw, then Save' : 'Black paper — draw, then Save';
     }
     function buildDrawColors(){
@@ -5293,19 +5422,30 @@ if ("serviceWorker" in navigator) {
       return { x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY };
     }
     function strokeDown(e){
+      const pt = canvasPointFromEvent(e);
+      if(drawTool === 'bucket'){
+        // Bucket is a single tap-to-fill action, not a drag stroke.
+        const hex = (DRAW_COLORS.find(c=>c.key===drawColor) || DRAW_COLORS[6]).hex;
+        floodFill(pt.x, pt.y, hex);
+        return;
+      }
       isDrawingStroke = true;
-      lastPt = canvasPointFromEvent(e);
+      lastPt = pt;
       try{ drawCanvas.setPointerCapture(e.pointerId); }catch(err){}
       // a plain tap (no drag) still leaves a dot
       drawDotOrLine(lastPt, lastPt);
     }
     function strokeMove(e){
-      if(!isDrawingStroke) return;
+      if(!isDrawingStroke || drawTool === 'bucket') return;
       const pt = canvasPointFromEvent(e);
       drawDotOrLine(lastPt, pt);
       lastPt = pt;
     }
-    function strokeUp(){ isDrawingStroke = false; lastPt = null; }
+    function strokeUp(){
+      if(isDrawingStroke) pushHistory(); // commit the completed pen stroke to history
+      isDrawingStroke = false;
+      lastPt = null;
+    }
     function drawDotOrLine(from, to){
       if(!drawCtx) return;
       const hex = (DRAW_COLORS.find(c=>c.key===drawColor) || DRAW_COLORS[6]).hex;
@@ -5325,15 +5465,29 @@ if ("serviceWorker" in navigator) {
       drawCanvas.addEventListener('pointerup', strokeUp);
       drawCanvas.addEventListener('pointercancel', strokeUp);
     }
+    function setDrawTool(tool){
+      drawTool = tool;
+      if(drawBucketBtn) drawBucketBtn.classList.toggle('selected', tool==='bucket');
+      if(drawCanvas) drawCanvas.style.cursor = (tool==='bucket') ? 'cell' : 'crosshair';
+    }
+    if(drawBucketBtn) drawBucketBtn.addEventListener('click', ()=> setDrawTool(drawTool==='bucket' ? 'pen' : 'bucket'));
+    if(drawUndoBtn) drawUndoBtn.addEventListener('click', undoDraw);
+    if(drawRedoBtn) drawRedoBtn.addEventListener('click', redoDraw);
 
     function openDrawFullscreen(){
       if(!drawOverlay) return;
       if(!drawCtx) drawCtx = drawCanvas.getContext('2d');
       paperBg = '#000000'; // always opens as a black paper; use Reverse to flip it
+      setDrawTool('pen');
+      drawHistory = [];
+      historyIndex = -1;
       fillCanvasBg();
       if(currentPaper && currentPaper.image){
         const img = new Image();
-        img.onload = ()=>{ drawCtx.drawImage(img, 0, 0, drawCanvas.width, drawCanvas.height); };
+        img.onload = ()=>{
+          drawCtx.drawImage(img, 0, 0, drawCanvas.width, drawCanvas.height);
+          pushHistory(); // snapshot the loaded drawing so undo doesn't skip past it
+        };
         img.src = currentPaper.image;
       }
       drawStatus.textContent = (currentPaper && currentPaper.by) ? ('last updated by ' + currentPaper.by) : 'draw something, then Save';
