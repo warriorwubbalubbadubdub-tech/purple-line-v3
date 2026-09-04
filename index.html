@@ -4390,8 +4390,8 @@ if ("serviceWorker" in navigator) {
 
     /* ---------- entering / exiting the mode ---------- */
     function setProgMode(on){
-      switchTaskSet(on);
       document.body.classList.toggle('prog-mode', on);
+      switchTaskSet(on);
       progModeBtn.classList.toggle('on', on);
       progModeBtnLabel.textContent = on ? 'Exit Prog' : 'Prog Mode';
       if(wordmark) wordmark.innerHTML = on ? 'Grey<span>·</span>Line' : 'Purple<span>·</span>Line';
@@ -4467,6 +4467,7 @@ if ("serviceWorker" in navigator) {
       saveTimerState();
       renderMenuVoices();
       renderTomorrowList();
+      void wrap.offsetHeight;
       render(); updateControls();
     }
 
@@ -4924,11 +4925,9 @@ if ("serviceWorker" in navigator) {
 
     function petResetStretch(){
       petStreakCat.style.transition = 'transform .12s ease, opacity .08s ease';
-      // Never reset the roll-mid enlargement here. The middle roll frame is
-      // intentionally larger than the other roll frames.
-      const isMid = petStreakCat.src.endsWith('/' + ROLL_FRAMES.mid) ||
-                    petStreakCat.src.endsWith(ROLL_FRAMES.mid);
-      petStreakCat.style.transform = isMid ? 'translateY(3px) scaleX(1.20) scaleY(1.29)' : 'scale(1)';
+      // On release the cat must always return to its normal visual size.
+      // The roll-mid enlargement is only for the held middle frame.
+      petStreakCat.style.transform = 'scale(1)';
       setTimeout(()=>{ petStreakCat.style.transition = ''; }, 260);
     }
     function petBeginHold(){
