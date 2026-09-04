@@ -4540,7 +4540,7 @@ if ("serviceWorker" in navigator) {
     const FIREBASE_DB_URL = 'https://my-room-app-ea5a5-default-rtdb.firebaseio.com';
     const ROOM_CAPACITY = {'2009':2, '2011':4}; // room 2009 is a 2-person room, 2011 stays at 4
     const HEARTBEAT_MS = 2000; // 2s — still near real-time, half the Firebase request volume
-    const STALE_MS = 6000; // ~3 missed beats grace before someone is considered gone (avoids false "disconnected" on a single slow request)
+    const STALE_MS = 12000; // ~6 missed beats grace before someone is considered gone — wide enough to absorb normal network latency/jitter and background-tab throttling without flickering someone online/offline
     function isFresh(ts){ return typeof ts==='number' && (Date.now()-ts) < STALE_MS; }
     // Ghost entries: if a tab is closed/crashes without DELETE-ing its slot, its row
     // stays in Firebase forever with a stale ts. Anywhere we COUNT or LIST who's in
@@ -5705,37 +5705,65 @@ if ("serviceWorker" in navigator) {
       sampleRoomWork();
       const mine = Object.assign({ts:Date.now()}, myStatus());
 
+      // Schedule the next beat right away, based on when THIS one started,
+      // rather than waiting for all the network calls below to resolve.
+      // Previously the four Firebase round-trips below ran one after another
+      // and only THEN scheduled the next heartbeat — so on any real network
+      // (mobile especially) the actual gap between two ts writes could run
+      // well past HEARTBEAT_MS and even past STALE_MS, making someone who
+      // was genuinely online flicker to "offline" or never show as online
+      // at all. Scheduling up front decouples the write cadence from
+      // round-trip latency.
+      if(heartbeatTimer) clearTimeout(heartbeatTimer);
+      heartbeatTimer = setTimeout(heartbeat, HEARTBEAT_MS);
+
       try{
-        await pushMyStatus(mine);
-        await pushRoomDailyState(mine);
+        // Push our own status and read the room in parallel instead of
+        // sequentially — these don't depend on each other, and running them
+        // one-at-a-time was the main source of the extra latency above.
+        const [, data] = await Promise.all([
+          pushMyStatus(mine),
+          fetchRoom()
+        ]);
 
-        // Ignore a response if the user left/joined another room while the
-        // request was in flight.
-        if(roomId !== activeRoom || memberId !== activeMember) return;
-
-        const data = await fetchRoom();
-
+        // Ignore a stale response if the user left/joined another room
+        // while these requests were in flight.
         if(roomId !== activeRoom || memberId !== activeMember) return;
 
         data.members = data.members || {};
         data.members[activeMember] = mine;
-        data.daily = await fetchRoomDaily(roomDayKey);
+        renderRoomPanel(data);
+
+        // Daily aggregate (used for "total studied in room") is lower
+        // priority than presence — let it happen after the above so the
+        // online dot updates as fast as possible.
+        await pushRoomDailyState(mine);
         if(roomId !== activeRoom || memberId !== activeMember) return;
+        const daily = await fetchRoomDaily(roomDayKey);
+        if(roomId !== activeRoom || memberId !== activeMember) return;
+        data.daily = daily;
         data.daily.members = data.daily.members || {};
         data.daily.members[activeMember] = mine;
         renderRoomPanel(data);
       }catch(e){
         console.error('[Purple Line] Room heartbeat failed:', e);
       }
-
-      if(roomId === activeRoom && memberId === activeMember){
-        heartbeatTimer = setTimeout(heartbeat, HEARTBEAT_MS);
-      }
     }
     function startHeartbeat(){
       stopHeartbeat();
       heartbeat();
     }
+    // Background tabs get their setTimeout throttled or fully paused by the
+    // browser, so a heartbeat scheduled while hidden can sit well past
+    // STALE_MS before it fires. Firing one immediately on return to the
+    // foreground fixes the "shows offline even though I'm here" case for
+    // whoever just switched back to the tab, instead of waiting up to
+    // HEARTBEAT_MS (or longer, post-throttle) for the next scheduled beat.
+    document.addEventListener('visibilitychange', ()=>{
+      if(document.visibilityState === 'visible' && roomId && memberId){
+        heartbeat();
+      }
+    });
     function stopHeartbeat(){
       if(heartbeatTimer){
         clearTimeout(heartbeatTimer);
