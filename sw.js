@@ -1,4 +1,4 @@
-const CACHE_NAME = 'purple-line-v21.7';
+const CACHE_NAME = 'purple-line-v21.8';
 
 const ASSETS = [
   './',
