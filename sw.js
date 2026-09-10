@@ -1,4 +1,4 @@
-const CACHE_NAME = 'purple-line-v22.3';
+const CACHE_NAME = 'purple-line-v22.4';
 
 const ASSETS = [
   './',
@@ -94,15 +94,102 @@ self.addEventListener('activate', event => {
 });
 
 // ========================================
+// SCHEDULED NOTIFICATIONS (background alert
+// when the timer ends with the screen locked)
+// ========================================
+//
+// The page's own timer keeps real elapsed time correctly with Date.now(),
+// but once the screen locks, the OS fully suspends the page's JS — no
+// setTimeout/setInterval in the page can fire a sound at the right moment
+// anymore. That's the actual cause of "works sometimes, not always" and
+// "silent when phone is locked".
+//
+// The fix: ask the Service Worker to schedule a real system notification
+// with a TimestampTrigger for the exact moment the phase should end. Chrome
+// on Android fires these even while the browser itself is fully closed or
+// the screen is locked, because the OS (not the page's JS) owns the timer.
+// A notification can't play our custom .m4a voice file directly, but it can
+// vibrate + play the phone's default notification sound, which reliably
+// wakes the screen/gets attention at the right second. The moment the
+// person taps the notification (or reopens the app), the app is alive again
+// and plays the *actual* recorded voice line immediately.
+
+const TRIGGER_SUPPORTED = (() => {
+  try { return 'showTrigger' in Notification.prototype; } catch (e) { return false; }
+})();
+
+async function cancelScheduled(tag) {
+  try {
+    const existing = await self.registration.getNotifications({ tag, includeTriggered: true });
+    existing.forEach(n => n.close());
+  } catch (e) { /* ignore */ }
+}
+
+async function scheduleNotification(tag, title, body, timestamp) {
+  await cancelScheduled(tag);
+  if (timestamp <= Date.now()) return; // already in the past, nothing to schedule
+  try {
+    const options = {
+      tag,
+      body,
+      icon: './icon-192.png',
+      badge: './icon-192.png',
+      vibrate: [200, 100, 200, 100, 200],
+      renotify: true,
+      requireInteraction: false,
+      data: { url: './' }
+    };
+    if (TRIGGER_SUPPORTED) {
+      options.showTrigger = new TimestampTrigger(timestamp);
+      await self.registration.showNotification(title, options);
+    } else {
+      // Fallback for browsers without trigger support: fire immediately if
+      // this message happens to arrive close to the target time (e.g. sent
+      // right as the phase ends while the SW happens to be awake). This is
+      // best-effort only — it cannot guarantee a locked-screen alert.
+      const delay = timestamp - Date.now();
+      if (delay <= 5000) {
+        await self.registration.showNotification(title, options);
+      }
+    }
+  } catch (e) {
+    console.warn('[Purple Line SW] scheduleNotification failed:', e);
+  }
+}
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of allClients) {
+      if ('focus' in client) { await client.focus(); return; }
+    }
+    if (self.clients.openWindow) await self.clients.openWindow('./');
+  })());
+});
+
+// ========================================
 // MESSAGE
 // ========================================
 
 self.addEventListener('message', event => {
-  if (
-    event.data &&
-    event.data.type === 'SKIP_WAITING'
-  ) {
+  if (!event.data) return;
+
+  if (event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+    return;
+  }
+
+  if (event.data.type === 'SCHEDULE_PHASE_NOTIFICATION') {
+    const { tag, title, body, timestamp } = event.data;
+    event.waitUntil(scheduleNotification(tag, title, body, timestamp));
+    return;
+  }
+
+  if (event.data.type === 'CANCEL_PHASE_NOTIFICATION') {
+    const { tag } = event.data;
+    event.waitUntil(cancelScheduled(tag));
+    return;
   }
 });
 
